@@ -1,0 +1,42 @@
+{
+  "上游仓库": "https://github.com/HuanchuanTech/xntfs",
+  "固定提交": "b52f9bea006bafad032455533e499bccd7e605c8",
+  "文件": [
+    {
+      "文件": "ntfs3g.swift",
+      "上游路径": "ntfs3g/ntfs3g.swift",
+      "上游SHA256": "9a3b99893163c1f5c82b77f11b3ac462f9b4442df8c5340e4e59f231e235d291",
+      "本地SHA256": "9a3b99893163c1f5c82b77f11b3ac462f9b4442df8c5340e4e59f231e235d291"
+    },
+    {
+      "文件": "ntfs3gFileSystem.swift",
+      "上游路径": "ntfs3g/ntfs3gFileSystem.swift",
+      "上游SHA256": "0c80ecf8a10f97d86c126901b507269a18d615076bf36447e40413c8e4a831d3",
+      "本地SHA256": "c3acac8c8b1d74c17a56ebf4d53d333b2d3b596213166aa69524242c3d64813f"
+    },
+    {
+      "文件": "ntfs3gItem.swift",
+      "上游路径": "ntfs3g/ntfs3gItem.swift",
+      "上游SHA256": "1177e042b7d31224e10a0e3090fe057106aac32bdd94ba90263ca35c30f2a942",
+      "本地SHA256": "1177e042b7d31224e10a0e3090fe057106aac32bdd94ba90263ca35c30f2a942"
+    },
+    {
+      "文件": "ntfs3gVolume.swift",
+      "上游路径": "ntfs3g/ntfs3gVolume.swift",
+      "上游SHA256": "7f529f9540196c61c57434a5b9986302b716c167c8e3144de9a46972c64515cc",
+      "本地SHA256": "ce0805f39e3216ed4fb294a4645937e6c1a264346610aa1207806d9db5fc9ef7"
+    },
+    {
+      "文件": "ntfs_device_fskit.m",
+      "上游路径": "ntfs3g/bridge/ntfs_device_fskit.m",
+      "上游SHA256": "021d1734c96bd4a1c58dad7dd059166ab361e758048917d49b78f16637d2ede5",
+      "本地SHA256": "6191e0881776c4d4a070f9f57a347be3290a03166b36143c4f47c80dd343225a"
+    },
+    {
+      "文件": "ntfs3g-Bridging-Header.h",
+      "上游路径": "ntfs3g/ntfs3g-Bridging-Header.h",
+      "上游SHA256": "5b0eb44a99e3f6786b1927f137ee4b170b587d37b7f5c037549d863fcb313624",
+      "本地SHA256": "5b0eb44a99e3f6786b1927f137ee4b170b587d37b7f5c037549d863fcb313624"
+    }
+  ]
+}

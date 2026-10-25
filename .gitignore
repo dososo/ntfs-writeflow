@@ -1,0 +1,38 @@
+.build/
+build/
+dist/
+研究/参考源码/
+研究/证据/
+验证/产物/
+*.xcuserstate
+xcuserdata/
+.DS_Store
+__pycache__/
+*.pyc
+
+# 本机工作证据、账户配置和任务记录不提交公开仓库。
+.codex/
+研究/
+验证/
+tasks/
+
+# 签名、公证及认证材料仅留在本机安全位置。
+*.provisionprofile
+*.mobileprovision
+*.p12
+*.pfx
+*.key
+*.pem
+.env
+.env.*
+
+# 本地测试产物和分发二进制不作为仓库源码提交。
+Tests/**/结果/
+Tests/**/产物/
+ThirdParty/FSKitAdapter/Tests/产物/
+*.dmg
+*.zip
+
+验证/引擎/镜像闭环-*/
+
+验证/系统/托管镜像-*/

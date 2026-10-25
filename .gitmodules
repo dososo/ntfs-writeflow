@@ -1,0 +1,3 @@
+[submodule "ThirdParty/ntfs-3g"]
+	path = ThirdParty/ntfs-3g
+	url = https://github.com/tuxera/ntfs-3g.git

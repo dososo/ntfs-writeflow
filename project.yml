@@ -1,0 +1,141 @@
+name: NTFSWorkbench
+options:
+  minimumXcodeGenVersion: 2.44.1
+  developmentLanguage: zh-Hans
+  deploymentTarget:
+    macOS: '26.0'
+settings:
+  base:
+    SWIFT_VERSION: '5.0'
+    MACOSX_DEPLOYMENT_TARGET: '26.0'
+    ARCHS: arm64
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGNING_ALLOWED: NO
+    ENABLE_HARDENED_RUNTIME: YES
+    CURRENT_PROJECT_VERSION: 2
+    MARKETING_VERSION: 0.1.1
+targets:
+  NTFSWorkbench:
+    type: application
+    platform: macOS
+    sources:
+      - Sources/App
+      - Sources/Core
+      - Sources/HelperShared
+      - path: LICENSE
+        buildPhase: resources
+      - path: 第三方组件说明.md
+        buildPhase: resources
+      - path: ThirdParty/ntfs-3g/COPYING
+        buildPhase: resources
+      - path: ThirdParty/ntfs-3g/COPYING.LIB
+        buildPhase: resources
+      - path: ThirdParty/ntfs-3g/AUTHORS
+        buildPhase: resources
+      - path: ThirdParty/ntfs-3g/CREDITS
+        buildPhase: resources
+    info:
+      path: Configuration/App-Info.plist
+      properties:
+        CFBundleDisplayName: NTFS 畅写
+        CFBundleName: NTFS 畅写
+        CFBundleIconFile: WriteFlow
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSMinimumSystemVersion: '26.0'
+        NSHighResolutionCapable: true
+        NSRemovableVolumesUsageDescription: 用于访问您选择的外部磁盘，并在正常卸载后安全弹出。
+        NSHumanReadableCopyright: 免费开源候选版，采用 GPL-2.0；完整兼容性验收进行中。
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.blteam.ntfsworkbench
+        ENABLE_APP_SANDBOX: NO
+        SWIFT_OBJC_BRIDGING_HEADER: Configuration/App-Bridging-Header.h
+    dependencies:
+      - sdk: FSKit.framework
+      - sdk: IOKit.framework
+      - sdk: DiskArbitration.framework
+      - sdk: ServiceManagement.framework
+      - target: NTFSWriteFlowMountHelper
+        embed: true
+        link: false
+        codeSign: false
+        copy:
+          destination: productsDirectory
+          subpath: $(CONTENTS_FOLDER_PATH)/Library/HelperTools
+      - target: NTFSFileSystem
+        embed: true
+        link: false
+        codeSign: false
+        copy:
+          destination: productsDirectory
+          subpath: $(EXTENSIONS_FOLDER_PATH)
+    postBuildScripts:
+      - path: script/embed_helper_configuration.sh
+        name: 复制挂载服务配置
+        inputFiles:
+          - $(SRCROOT)/Configuration/com.blteam.ntfsworkbench.mount-helper.plist
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Library/LaunchDaemons/com.blteam.ntfsworkbench.mount-helper.plist
+    scheme: {}
+  NTFSWriteFlowMountHelper:
+    type: tool
+    platform: macOS
+    sources:
+      - Sources/PrivilegedHelper
+      - Sources/HelperShared
+      - Sources/Core/VolumeRecord.swift
+      - Sources/App/Services/MountedFileSystemReader.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.blteam.ntfsworkbench.mount-helper
+        PRODUCT_NAME: NTFSWriteFlowMountHelper
+        GENERATE_INFOPLIST_FILE: YES
+        CREATE_INFOPLIST_SECTION_IN_BINARY: YES
+        SWIFT_OBJC_BRIDGING_HEADER: Sources/PrivilegedHelper/Helper-Bridging-Header.h
+        SKIP_INSTALL: YES
+    dependencies:
+      - sdk: Foundation.framework
+      - sdk: IOKit.framework
+      - sdk: DiskArbitration.framework
+      - sdk: Security.framework
+  NTFSFileSystem:
+    type: extensionkit-extension
+    platform: macOS
+    sources:
+      - path: ThirdParty/FSKitAdapter
+        excludes:
+          - Tests
+          - '*.md'
+          - LICENSE
+      - path: ThirdParty/NTFSBridge/ntfs_fskit.c
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.blteam.ntfsworkbench.filesystem
+        PRODUCT_NAME: NTFSFileSystem
+        INFOPLIST_FILE: Configuration/FileSystem-Info.plist
+        CODE_SIGN_ENTITLEMENTS: Configuration/FileSystem.entitlements
+        GENERATE_INFOPLIST_FILE: YES
+        ENABLE_APP_SANDBOX: YES
+        APPLICATION_EXTENSION_API_ONLY: YES
+        SKIP_INSTALL: YES
+        SWIFT_OBJC_BRIDGING_HEADER: Configuration/FileSystem-Bridging-Header.h
+        CLANG_ENABLE_MODULES: YES
+        CLANG_ENABLE_OBJC_ARC: YES
+        GCC_PREPROCESSOR_DEFINITIONS: '$(inherited) HAVE_CONFIG_H=1'
+        OTHER_CFLAGS: '$(inherited) -ffile-prefix-map="$(SRCROOT)"=.'
+        HEADER_SEARCH_PATHS:
+          - '$(inherited)'
+          - '$(SRCROOT)/ThirdParty/NTFSBridge'
+          - '$(SRCROOT)/ThirdParty/ntfs-3g'
+          - '$(SRCROOT)/ThirdParty/ntfs-3g/include'
+          - '$(SRCROOT)/build/engine/arm64'
+        OTHER_LDFLAGS:
+          - '$(inherited)'
+          - '"$(SRCROOT)/build/engine/arm64/libntfs-3g/.libs/libntfs-3g.a"'
+    dependencies:
+      - sdk: FSKit.framework
+      - sdk: DiskArbitration.framework
+      - sdk: ExtensionFoundation.framework
+      - sdk: CoreFoundation.framework
+    scheme: {}
