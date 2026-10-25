@@ -69,7 +69,9 @@ These are actual app screenshots using the dedicated `WriteFlow Demo` image. Tem
 
 > **Target:** macOS 26 or later · Apple Silicon. The tested host runs macOS 26.6.2; Intel, older macOS versions, and every macOS 26 point release have not been validated.
 
-The GitHub repository and release attachments are being prepared; no public download link is available yet. Once you have an official release package for the relevant version:
+Download the [0.1.1 preview release](https://github.com/dososo/ntfs-writeflow/releases/tag/v0.1.1): [DMG installer](https://github.com/dososo/ntfs-writeflow/releases/download/v0.1.1/NTFS-WriteFlow-0.1.1-arm64.dmg) or [app ZIP](https://github.com/dososo/ntfs-writeflow/releases/download/v0.1.1/NTFS-WriteFlow-0.1.1-arm64.zip). The same release includes complete corresponding source, `SHA256SUMS.txt`, and distribution verification records. This remains a development preview.
+
+Installation:
 
 1. Check its `SHA256SUMS.txt`, extract the app ZIP, and place `NTFSWriteFlow.app` in **`Applications` inside your home folder**, or `~/Applications`. This is the installation location used in current validation.
 2. Open the app from that fixed location. Enable its filesystem extension in **System Settings → General → Login Items & Extensions → File System Extensions**. Some macOS versions expose this through the category view.
@@ -92,7 +94,7 @@ Tests already performed include:
 | Permissions and errors | Helper policies, actual file ACLs, XPC descriptor transfer, incorrect-signature rejection, synchronization failures, and lifecycle tests. |
 | Version 0.1.1 whole-disk ejection | An actual external fixed USB disk completed safe removal through the app, with independent original-media, unmounted-state, and closed-reference checks. A test image was mounted read-write and ejected through the GUI; its mapping and original device disappeared, and an offline tool verified the full SHA-256 of a 65,573-byte file. 314 non-device regression checks and five system ejection integration cases passed. The real-disk ejection test added no new test writes. |
 
-For this version's signing, notarization, ticket stapling, extracted-package Gatekeeper checks, and source correspondence, consult `分发验证摘要.json`, `构建对应记录.json`, and `SHA256SUMS.txt` shipped with the release. Source is frozen before building and notarizing, so this README does not predeclare success for a binary that has not yet been produced.
+The app has passed Developer ID signing, Apple notarization, ticket stapling, and local Gatekeeper checks. The DMG and ZIP contain the same validated app. Product source and build resources were frozen before the offline rebuild; public download documentation is updated for this release. Consult `分发验证摘要.json`, `构建对应记录.json`, and `SHA256SUMS.txt` attached to the release for artifact identity and verification scope. Notarization does not establish complete filesystem compatibility.
 
 **Not yet complete:** Windows reading and write-back, Windows filesystem checks, physical power loss or unexpected unplugging, sleep/wake, long-running stress tests, actual multi-user isolation, and clean-Mac installation and full removal. Formatting, complete filesystem checking/repair, login launch, per-volume preferences, and notifications are not all delivered. Testing a dedicated directory does not validate every pre-existing file on a disk.
 
@@ -108,9 +110,11 @@ The privileged service accepts requests only from the app after signature verifi
 
 Requires **an Apple Silicon Mac, macOS 26, Xcode 26 with a macOS 26 SDK, XcodeGen, Autoconf, Automake, and GNU Libtool**. The tested build baseline is Xcode 26.6, macOS SDK 26.5, and XcodeGen 2.44.1.
 
-Once the repository is created, clone its actual address with `git clone --recurse-submodules`, then build from the root. The proposed repository is not public yet, so no inactive clone URL is provided here. For an existing checkout:
+Clone the public repository with its pinned submodule, then build:
 
 ```sh
+git clone --recurse-submodules https://github.com/dososo/ntfs-writeflow.git
+cd ntfs-writeflow
 git submodule update --init --recursive
 NTFS_BUILD_CONFIGURATION=Release bash script/build_and_run.sh --build-only
 ```
