@@ -15,6 +15,15 @@
 [![版本](https://img.shields.io/badge/版本-0.1.1--预览版-23334B.svg)](https://github.com/dososo/ntfs-writeflow/releases/tag/v0.1.1)
 [![技术](https://img.shields.io/badge/SwiftUI%20%2B%20FSKit%20%2B%20NTFS--3G-23334B.svg)](#技术栈与架构)
 
+<p>
+  <a href="https://github.com/dososo/ntfs-writeflow/releases/download/v0.1.1/NTFS-WriteFlow-0.1.1-arm64.dmg"><strong>⬇ 下载 Mac 应用（DMG）</strong></a>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/dososo/ntfs-writeflow/releases/download/v0.1.1/NTFS-WriteFlow-0.1.1-arm64.zip">ZIP 下载</a>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/dososo/ntfs-writeflow/releases/tag/v0.1.1">全部 Release 附件</a>
+</p>
+<p><sub>0.1.1 预览版 · Apple Silicon · macOS 26 及以上</sub></p>
+
 </div>
 
 > 免费开源的 macOS NTFS 工具：查看真实磁盘状态，选择只读或读写挂载，在 Finder 中管理文件，完成操作后正常卸载或安全推出整盘。

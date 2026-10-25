@@ -12,8 +12,17 @@ Read and write NTFS on your Mac, with a clear view of your disks.
 [![macOS](https://img.shields.io/badge/macOS-26%2B-23334B.svg)](#install)
 [![Architecture](https://img.shields.io/badge/Architecture-Apple%20Silicon-168B86.svg)](#install)
 [![Status](https://img.shields.io/badge/Status-Development%20candidate-B66C24.svg)](#validation-and-limits)
-[![Version](https://img.shields.io/badge/Version-0.1.1-23334B.svg)](发布/版本说明.md)
+[![Version](https://img.shields.io/badge/Version-0.1.1--Preview-23334B.svg)](https://github.com/dososo/ntfs-writeflow/releases/tag/v0.1.1)
 [![Built with](https://img.shields.io/badge/SwiftUI%20%2B%20FSKit%20%2B%20NTFS--3G-23334B.svg)](#architecture)
+
+<p>
+  <a href="https://github.com/dososo/ntfs-writeflow/releases/download/v0.1.1/NTFS-WriteFlow-0.1.1-arm64.dmg"><strong>⬇ Download for Mac (DMG)</strong></a>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/dososo/ntfs-writeflow/releases/download/v0.1.1/NTFS-WriteFlow-0.1.1-arm64.zip">Download ZIP</a>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/dososo/ntfs-writeflow/releases/tag/v0.1.1">All release assets</a>
+</p>
+<p><sub>0.1.1 Preview · Apple Silicon · macOS 26 or later</sub></p>
 
 </div>
 
