@@ -28,6 +28,11 @@ Read and write NTFS on your Mac, with a clear view of your disks.
 
 > A free, open-source NTFS utility for macOS: inspect actual disk state, choose read-only or read-write mounting, work with files in Finder, and unmount normally or safely eject the whole disk when finished.
 
+<div align="center">
+  <a href="https://dososo.github.io/ntfs-writeflow/"><img src="assets/video/intro-poster.jpg" width="82%" alt="NTFS WriteFlow 36-second intro (click to watch)" /></a>
+  <br><sub><b>▶ NTFS WriteFlow · 36-second intro</b> · real screen recordings &nbsp;·&nbsp; <a href="https://dososo.github.io/ntfs-writeflow/"><b>Watch online</b></a> (works on phones) &nbsp;·&nbsp; <a href="https://github.com/dososo/ntfs-writeflow/releases/download/v0.1.1/NTFS-WriteFlow-0.1.1-intro-36s-1080p.mp4">Download MP4</a></sub>
+</div>
+
 ## What is NTFS WriteFlow?
 
 NTFS WriteFlow is a **native macOS desktop app for NTFS**. SwiftUI provides the interface, Apple's FSKit hosts the user-space filesystem, and NTFS-3G supplies the NTFS engine. The app interface is currently in Simplified Chinese; this README provides English usage and build guidance. Volumes mounted by this app use the `blntfs` filesystem type and are accessible through Finder and ordinary file operations.

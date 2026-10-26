@@ -28,6 +28,11 @@
 
 > 免费开源的 macOS NTFS 工具：查看真实磁盘状态，选择只读或读写挂载，在 Finder 中管理文件，完成操作后正常卸载或安全推出整盘。
 
+<div align="center">
+  <a href="https://dososo.github.io/ntfs-writeflow/"><img src="assets/video/intro-poster.jpg" width="82%" alt="NTFS 畅写 · 36 秒介绍片（点击在线观看）" /></a>
+  <br><sub><b>▶ NTFS 畅写 · 36 秒介绍片</b> · 真实录屏 &nbsp;·&nbsp; <a href="https://dososo.github.io/ntfs-writeflow/"><b>在线观看</b></a>（手机可看） &nbsp;·&nbsp; <a href="https://github.com/dososo/ntfs-writeflow/releases/download/v0.1.1/NTFS-WriteFlow-0.1.1-intro-36s-1080p.mp4">下载视频</a></sub>
+</div>
+
 ## NTFS 畅写是什么
 
 NTFS 畅写是一款 **macOS 原生 NTFS 桌面应用**。SwiftUI 提供磁盘界面，Apple FSKit 承载用户空间文件系统，NTFS-3G 提供 NTFS 引擎。通过本应用挂载的卷以 `blntfs` 标识，在 Finder 和普通文件操作中使用。
