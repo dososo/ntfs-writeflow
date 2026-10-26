@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>NTFS 畅写 · 产品介绍片</title>
+<meta name="description" content="NTFS 畅写（NTFS WriteFlow）产品介绍片：真实录屏演示只读挂载、读写挂载、Finder 文件操作、重挂复读与安全弹出整盘。" />
+<meta property="og:title" content="NTFS 畅写 · 产品介绍" />
+<meta property="og:image" content="https://dososo.github.io/ntfs-writeflow/ntfs-writeflow-short-poster.jpg" />
+<link rel="icon" href="logo.png" />
+<style>
+  :root { --abyss: #040B17; --deep: #07152A; --navy: #0B2A5C; --teal: #26E7BA; --paper: #F5F7FA; --muted: #9DB3D6; --line: rgba(157,179,214,.2); }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--abyss); color: var(--paper);
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans SC", "Helvetica Neue", sans-serif; }
+  body { background: radial-gradient(1100px 700px at 60% 0%, var(--navy) 0%, var(--deep) 48%, var(--abyss) 100%) no-repeat, var(--abyss); min-height: 100vh; }
+  main { max-width: 1120px; margin: 0 auto; padding: 40px 16px 56px; }
+  header { display: flex; align-items: center; gap: 16px; margin-bottom: 24px; }
+  header img { width: 56px; height: 56px; }
+  h1 { margin: 0; font-size: clamp(22px, 4vw, 32px); font-weight: 700; letter-spacing: .02em; }
+  .sub { color: var(--muted); font-size: 15px; margin-top: 4px; }
+  .player { position: relative; border-radius: 14px; overflow: hidden; background: #000; box-shadow: 0 30px 80px rgba(0,0,0,.5), inset 0 0 0 1px var(--line); }
+  video { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; background: #000; }
+  .h2 { margin: 34px 0 6px; font-size: 20px; font-weight: 700; }
+  .sub2 { margin: 0 0 14px; color: var(--muted); font-size: 14px; line-height: 1.7; }
+  .actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 18px 0 8px; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; padding: 11px 18px; border-radius: 999px; text-decoration: none; font-size: 15px; font-weight: 600; color: var(--paper); box-shadow: inset 0 0 0 1px var(--line); }
+  .btn.primary { background: var(--teal); color: #04121F; box-shadow: none; }
+  .facts { color: var(--muted); font-size: 14px; line-height: 1.8; margin-top: 18px; border-top: 1px solid var(--line); padding-top: 18px; }
+  .facts b { color: var(--paper); font-weight: 600; }
+  .en { margin-top: 18px; color: var(--muted); font-size: 13px; line-height: 1.7; }
+  @media (max-width: 600px) { main { padding-top: 24px; } header img { width: 44px; height: 44px; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <img src="logo.png" alt="NTFS 畅写图标" />
+    <div>
+      <h1>NTFS 畅写 · 产品介绍</h1>
+      <div class="sub">36 秒介绍片 · 真实录屏</div>
+    </div>
+  </header>
+
+  <div class="player">
+    <video controls playsinline preload="metadata" poster="ntfs-writeflow-short-poster.jpg">
+      <source src="https://github.com/dososo/ntfs-writeflow/releases/download/v0.1.1/NTFS-WriteFlow-0.1.1-intro-36s-1080p.mp4" type="video/mp4" />
+      你的浏览器无法播放内嵌视频，请使用下方「下载视频」。
+    </video>
+  </div>
+
+
+  <div class="actions">
+    <a class="btn primary" href="https://github.com/dososo/ntfs-writeflow/releases/download/v0.1.1/NTFS-WriteFlow-0.1.1-arm64.dmg">下载 Mac 应用（DMG）</a>
+    <a class="btn" href="https://github.com/dososo/ntfs-writeflow/releases/download/v0.1.1/NTFS-WriteFlow-0.1.1-intro-36s-1080p.mp4">下载 36 秒介绍片</a>
+    <a class="btn" href="https://github.com/dososo/ntfs-writeflow">GitHub 仓库与源码</a>
+  </div>
+
+  <div class="facts">
+    <b>0.1.1 预览版</b> · Apple Silicon · macOS 26 及以上 · 界面简体中文 · 免费开源（GPL-2.0）<br />
+    片中操作为真实录屏：演示卷是本轮新建的 NTFS 磁盘镜像；演示机已提前安装并完成系统授权，不代表全新 Mac 首次安装流程。等待过程已加速并在画面中标注。<br />
+    Windows 交叉读写与检查、异常拔插 / 掉电 / 睡眠唤醒、长期压力、多用户与多分区物理盘等尚未覆盖，详见仓库的已知问题与发布门禁。<br />
+    片中 Paragon 价格于 2026-10-25 在其官网核验（家庭用途单席、一次性付款）；地区、税费及后续变化以官网结算为准，两者功能与服务范围不同。
+  </div>
+  <p class="en">配乐为原创，采样署名：Salamander Grand Piano V3 by Alexander Holm（CC BY 3.0）、Versilian Studios VSCO 2 CE、FreePats、Karoryfer Samples（CC0）。字体：Noto Sans SC、Inter、JetBrains Mono（SIL OFL 1.1）。</p>
+  <p class="en">English: NTFS WriteFlow product video — a 36-second cut (music, no narration). Real screen recordings of read-only mount, read-write mount, Finder file operations, remount re-read and safe whole-disk eject on a freshly created NTFS disk image. Preview 0.1.1 for Apple Silicon, macOS 26+; the app UI is Simplified Chinese.</p>
+</main>
+</body>
+</html>
