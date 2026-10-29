@@ -52,3 +52,12 @@ build/core-tests/会话组合验证
   Sources/App/AppModel*.swift Tests/Core/AppModelSessionNotificationTests.swift \
   -o build/core-tests/会话通知接线验证
 build/core-tests/会话通知接线验证
+
+"${SWIFT[@]}" Sources/Core/SessionVerificationRequest.swift Tests/Core/SessionVerificationRequestTests.swift \
+  -o build/core-tests/限时会话配置验证
+build/core-tests/限时会话配置验证
+"${SWIFT[@]}" -import-objc-header Configuration/App-Bridging-Header.h \
+  Sources/Core/*.swift Sources/HelperShared/*.swift Sources/App/Services/*.swift \
+  Sources/App/AppModel*.swift Tests/Core/SessionVerificationRecordTests.swift \
+  -o build/core-tests/限时会话日志验证
+build/core-tests/限时会话日志验证

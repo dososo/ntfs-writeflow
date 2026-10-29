@@ -50,11 +50,17 @@ import AppKit
     weak var model: AppModel?
     var windowOpener: OpenWindowAction?
 
-    func applicationWillFinishLaunching(_ notification: Notification) { model?.startAutomaticSessionMonitoring() }
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        model?.startAutomaticSessionMonitoring()
+        model?.recordSessionVerification("即将完成启动")
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let loginLaunch = LoginLaunchService.wasLaunchedAtLogin
-        Task { await model?.startMonitoring(launchedAtLogin: loginLaunch) }
+        Task {
+            await model?.startMonitoring(launchedAtLogin:loginLaunch)
+            model?.recordSessionVerification("磁盘监控启动完成")
+        }
         if loginLaunch {
             NSApp.setActivationPolicy(.accessory)
 
@@ -65,6 +71,8 @@ import AppKit
             NSApp.activate()
             model?.requestAutomaticForegroundConfirmation()
         }
+        model?.recordSessionVerification("启动完成")
+        model?.scheduleSessionVerificationSamples()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -73,10 +81,14 @@ import AppKit
         windowOpener?(id: "main")
         NSApp.activate()
         model?.requestAutomaticForegroundConfirmation()
+        model?.recordSessionVerification("重新打开")
         return false
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
-    func applicationWillTerminate(_ notification: Notification) { model?.stopMonitoring() }
+    func applicationWillTerminate(_ notification: Notification) {
+        model?.stopMonitoring()
+        model?.recordSessionVerification("正常退出")
+    }
 }

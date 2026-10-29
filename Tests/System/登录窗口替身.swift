@@ -12,6 +12,9 @@ import Foundation
     }
     func stopMonitoring() { WindowLifecycleProbe.shared.record("stop-monitoring") }
     func requestAutomaticForegroundConfirmation() { WindowLifecycleProbe.shared.record("request-foreground-confirmation") }
+    // 本工具只测生产委托/窗口；限时OSLog记录由真正模型的独立用例验证。
+    func recordSessionVerification(_ event: String) {}
+    func scheduleSessionVerificationSamples() {}
     func refresh() async { WindowLifecycleProbe.shared.record("fake-refresh") }
 }
 

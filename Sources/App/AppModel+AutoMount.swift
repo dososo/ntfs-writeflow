@@ -75,6 +75,7 @@ extension AppModel {
         do { try LoginLaunchService.setEnabled(enabled) }
         catch { errorMessage = "登录启动设置失败：\(error.localizedDescription)" }
         refreshLoginStatus()
+        recordSessionVerification("登录设置变化")
     }
 
     func autoMode(for volume: VolumeRecord) -> AutoMountMode {
@@ -177,6 +178,12 @@ extension AppModel {
         case .screenUnlocked: break // 非可信解锁通知不能授予权限。
         }
         observeAutomaticSessionSnapshot()
+        recordSessionVerification("会话信号",signal:String(describing:event))
+        switch event {
+        case .workspaceResigned, .workspaceActive:
+            scheduleSessionVerificationSamples(event:"会话窗口采样",signal:String(describing:event))
+        default: break
+        }
         refreshAutomaticSessionEnvironment(epoch:autoMonitorEpoch)
     }
     private func currentAutomaticSessionSnapshot() -> AutoMountSessionSnapshot {
@@ -212,6 +219,7 @@ extension AppModel {
     }
     // 仅普通用户启动、reopen、菜单或明确确认按钮调用；系统激活/解锁不创建请求。
     func requestAutomaticForegroundConfirmation() {
+        defer { recordSessionVerification("主动确认请求") }
         let snapshot = observeAutomaticSessionSnapshot()
         guard autoSessionMonitor != nil, snapshot.consoleUserCurrent, snapshot.protectedDataAvailable,
               !autoSession.protectedDataBlocked, !autoSession.sleeping, autoSession.workspaceActive else {
@@ -342,6 +350,7 @@ extension AppModel {
                 autoCoordinator.observe(current, initial: false)
                 return (current, automaticContext())
             }, mount: { [self] value, mode in
+                recordSessionVerification("请求自动挂载")
                 refreshLoginStatus()
                 guard autoGenerations[id] == value.generation, !autoSuppressedMedia.contains(id),
                       value.volume.wholeMediaRegistryID.map({ !autoSuppressedWholeMedia.contains($0) }) ?? true,

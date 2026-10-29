@@ -51,6 +51,10 @@ import ServiceManagement
     @ObservationIgnored var autoSessionMonitorEpoch: UInt64 = 0
     @ObservationIgnored var autoSessionRevocationEpoch: UInt64 = 0
     @ObservationIgnored var autoForegroundRequest: (epoch: UInt64, deadline: TimeInterval)?
+    @ObservationIgnored let verificationProcessID = UUID().uuidString
+    @ObservationIgnored var verificationRequestID: String?
+    @ObservationIgnored var verificationSequence = 0
+    @ObservationIgnored var verificationBinarySHA: String?
     var autoIsOperating = false
     var autoStatus = "自动挂载已关闭。"
     var loginState = LoginLaunchState.pending
@@ -183,6 +187,7 @@ import ServiceManagement
     }
 
     func eject(_ volume: VolumeRecord) async {
+        recordSessionVerification("请求弹出")
         guard !isBusy, inventoryIsCurrent else { return }
         guard autoCoordinator.beginManualOperation() else { return }
         suppressAutomatic(for: volume)
@@ -209,6 +214,7 @@ import ServiceManagement
     }
 
     func mount(_ volume: VolumeRecord, readOnly: Bool) async {
+        recordSessionVerification("请求挂载")
         guard !isBusy, inventoryIsCurrent, !ejectedMedia.contains(volume) else { return }
         guard extensionDiagnostic.isEnabled else {
             errorMessage = "请先在系统设置 → 通用 → 登录项与扩展 → 按类别 → 文件系统扩展中启用 NTFSFileSystem。"
@@ -232,6 +238,7 @@ import ServiceManagement
     }
 
     func unmount(_ volume: VolumeRecord) async {
+        recordSessionVerification("请求卸载")
         guard !isBusy, inventoryIsCurrent else { return }
         guard autoCoordinator.beginManualOperation() else { return }
         suppressAutomatic(for: volume)

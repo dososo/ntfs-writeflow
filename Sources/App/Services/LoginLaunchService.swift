@@ -17,7 +17,14 @@ enum LoginLaunchState: Sendable {
     }
 }
 
+struct LoginLaunchContext: Sendable {
+    let eventID: UInt32?
+    let reason: UInt32?
+    var wasLaunchedAtLogin: Bool { LoginLaunchService.isLoginLaunch(eventID:eventID,reason:reason) }
+}
+
 @MainActor enum LoginLaunchService {
+    private(set) static var lastLaunchContext: LoginLaunchContext?
     // 同一次系统读取同时决定开关和文本，避免两次查询之间状态变化。
     static var state: LoginLaunchState {
         switch SMAppService.mainApp.status {
@@ -41,8 +48,10 @@ enum LoginLaunchState: Sendable {
     // Apple事件判定方法参考MIT项目LaunchAtLogin-Modern，归属见第三方组件说明。
     static var wasLaunchedAtLogin: Bool {
         let event = NSAppleEventManager.shared().currentAppleEvent
-        return isLoginLaunch(eventID: event?.eventID,
-            reason: event?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue)
+        let context = LoginLaunchContext(eventID:event?.eventID,
+            reason:event?.paramDescriptor(forKeyword:keyAEPropData)?.enumCodeValue)
+        lastLaunchContext = context
+        return context.wasLaunchedAtLogin
     }
 
     nonisolated static func isLoginLaunch(eventID: UInt32?, reason: UInt32?) -> Bool {

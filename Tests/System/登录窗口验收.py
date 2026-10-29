@@ -60,12 +60,15 @@ def main():
             self.name=name;self.login=login;self.menu=menu;self.token=str(uuid.uuid4()).upper();self.pid=None
             self.expected_confirmations=0 if login else 1
             self.root=run/name;self.root.mkdir(mode=0o700)
-            self.report={'场景':name,'登录原因注入':login,'菜单偏好':menu,'步骤':[],'结果':'进行中'}
+            # GUI测试进程只在私有临时目录收发；避免Documents触发TCC授权干扰时序。
+            self.ipc=Path(tempfile.mkdtemp(prefix='writeflow-window-ipc-'));self.ipc.chmod(0o700)
+            self.report={'私有通信目录':str(self.ipc),'场景':name,'登录原因注入':login,'菜单偏好':menu,'步骤':[],'结果':'进行中'}
             result['场景'].append(self.report);save()
         def events(self):
-            path=self.root/'回执.jsonl'
+            path=self.ipc/'回执.jsonl'
             if not path.exists():return []
-            rows=[json.loads(line) for line in path.read_bytes().split(b'\n')[:-1]]
+            data=path.read_bytes();(self.root/'回执.jsonl').write_bytes(data)
+            rows=[json.loads(line) for line in data.split(b'\n')[:-1]]
             if rows and self.pid is None:
                 first=rows[0]
                 if (first.get('event')!='configured' or first.get('bundle_path')!=str(app)
@@ -83,7 +86,7 @@ def main():
             raise RuntimeError(self.name+'：超时未观察到'+description)
         def launch(self):
             args=['/usr/bin/open','-n','-g','--stdout',self.root/'标准输出.txt','--stderr',self.root/'标准错误.txt']
-            for key,value in {'ROOT':str(self.root),'TOKEN':self.token,'LOGIN':str(self.login).lower(),'MENU':str(self.menu).lower()}.items():
+            for key,value in {'ROOT':str(self.ipc),'TOKEN':self.token,'LOGIN':str(self.login).lower(),'MENU':str(self.menu).lower()}.items():
                 args+=['--env','WRITEFLOW_WINDOW_PROBE_'+key+'='+value]
             command(args+[app])
             rows=self.wait(lambda rows:rows if any(e.get('event')=='start-monitoring' for e in rows) else None,'委托启动')
@@ -96,7 +99,7 @@ def main():
             self.report['早期订阅先于监控启动']=True;save();time.sleep(0.8)
         def action(self,action):
             request={'id':str(uuid.uuid4()),'token':self.token,'action':action}
-            temporary=self.root/'指令.tmp';temporary.write_text(json.dumps(request));os.replace(temporary,self.root/'指令.json')
+            temporary=self.ipc/'指令.tmp';temporary.write_text(json.dumps(request));os.replace(temporary,self.ipc/'指令.json')
             if action=='quit':return
             return self.wait(lambda rows:next((e for e in rows if e.get('command_id')==request['id']),None),action+'回执')
         def snapshot(self,name,expected,policy=0,minimized=False):
