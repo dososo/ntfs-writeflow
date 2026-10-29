@@ -7,8 +7,9 @@ import Foundation
     var record: (String) async throws -> VolumeRecord?
     var mount: (VolumeRecord, Bool) async throws -> Void
     var environment: () async -> AutoMountEnvironment
-    var sessionAllowed: () -> Bool
+    var sessionAllowed: (() -> Bool)? = nil
     var loginState: (() -> LoginLaunchState)? = nil
+    var sessionSnapshot: (() -> AutoMountSessionSnapshot)? = nil
 }
 
 extension AppModel {
@@ -18,8 +19,8 @@ extension AppModel {
         let epoch = autoMonitorEpoch
         self.loginRegistrationRequired = launchedAtLogin
         refreshLoginStatus()
-        autoSession.observeProtectedData(available: NSApp.isProtectedDataAvailable)
-        if NSApp.isActive { confirmAutomaticForeground() }
+        startAutomaticSessionMonitoring()
+        observeAutomaticSessionSnapshot()
         let monitor = DiskEventMonitor(onEvent: { [weak self] event in
             Task { @MainActor [weak self] in
                 guard let self, self.autoMonitorEpoch == epoch, self.diskMonitor != nil else { return }
@@ -33,49 +34,6 @@ extension AppModel {
         })
         diskMonitor = monitor
         guard monitor.start() else { autoStatus = "无法建立系统磁盘事件会话。"; diskMonitor = nil; return }
-        let center = DistributedNotificationCenter.default()
-        for (name, unlocked) in [("com.apple.screenIsLocked", false), ("com.apple.screenIsUnlocked", true)] {
-            autoObservers.append(center.addObserver(forName: Notification.Name(name), object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated {
-                    guard let self, self.autoMonitorEpoch == epoch, self.diskMonitor != nil else { return }
-                    if !unlocked { self.revokeAutomaticSession() }
-                    self.refreshAutomaticSessionEnvironment(epoch: epoch)
-                }
-            })
-        }
-        autoObservers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.sessionDidResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, self.autoMonitorEpoch == epoch, self.diskMonitor != nil else { return }
-                self.revokeAutomaticSession()
-            }
-        })
-        autoObservers.append(NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, self.autoMonitorEpoch == epoch, self.diskMonitor != nil else { return }
-                self.confirmAutomaticForeground()
-                self.refreshAutomaticSessionEnvironment(epoch: epoch)
-            }
-        })
-        for name in [NSWorkspace.sessionDidBecomeActiveNotification, NSWorkspace.didWakeNotification, NSWorkspace.willSleepNotification] {
-            autoObservers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated {
-                    guard let self, self.autoMonitorEpoch == epoch, self.diskMonitor != nil else { return }
-                    self.revokeAutomaticSession()
-                    self.refreshAutomaticSessionEnvironment(epoch: epoch)
-                }
-            })
-        }
-        for name in [Notification.Name.NSApplicationProtectedDataWillBecomeUnavailable,
-                     Notification.Name.NSApplicationProtectedDataDidBecomeAvailable] {
-            autoObservers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] notification in
-                let unavailable = notification.name == .NSApplicationProtectedDataWillBecomeUnavailable
-                MainActor.assumeIsolated {
-                    guard let self, self.autoMonitorEpoch == epoch, self.diskMonitor != nil else { return }
-                    self.observeAutomaticProtectedData(available: !unavailable && NSApp.isProtectedDataAvailable)
-                    self.refreshAutomaticSessionEnvironment(epoch: epoch)
-                }
-            })
-        }
         await refresh()
         guard autoMonitorEpoch == epoch, diskMonitor === monitor else { return }
         await refreshAutoEnvironment()
@@ -89,12 +47,8 @@ extension AppModel {
         autoGenerations.removeAll(); autoNative.removeAll(); autoCanonical.removeAll()
         autoSuppressedMedia.removeAll(); autoSuppressedWholeMedia.removeAll()
         diskMonitor?.stop(); diskMonitor = nil
-        for token in autoObservers {
-            DistributedNotificationCenter.default().removeObserver(token)
-            NSWorkspace.shared.notificationCenter.removeObserver(token)
-            NotificationCenter.default.removeObserver(token)
-        }
-        autoObservers.removeAll()
+        autoSessionMonitorEpoch &+= 1
+        autoSessionMonitor?.stop(); autoSessionMonitor = nil
         autoStatus = autoIsOperating ? "监控已停止，已提交操作仍在核对。" : "自动挂载监控已停止。"
     }
 
@@ -143,7 +97,7 @@ extension AppModel {
         autoPending.removeValue(forKey: id)
         diskMonitor?.suppress(mediaID: id)
         // 用户在界面作出选择是解锁状态的辅助依据；登录后台状态未知时不会推定解锁。
-        if NSApp.isActive { confirmAutomaticForeground() }
+        requestAutomaticForegroundConfirmation()
         updateAutomaticApproval()
         autoStatus = "已保存\(mode.title)，下次新接入时生效；当前挂载不会被接管。"
     }
@@ -188,6 +142,57 @@ extension AppModel {
         updateAutomaticApproval()
     }
 
+    // willFinishLaunching先订阅，防止漏掉非活动用户启动时的初始会话失活通知。
+    func startAutomaticSessionMonitoring(appCenter: NotificationCenter = .default,
+                                         workspaceCenter: NotificationCenter = NSWorkspace.shared.notificationCenter,
+                                         distributedCenter: NotificationCenter = DistributedNotificationCenter.default()) {
+        guard autoSessionMonitor == nil else { return }
+        autoSessionMonitorEpoch &+= 1
+        let epoch = autoSessionMonitorEpoch
+        autoSession = AutoMountSessionState()
+        let initial = currentAutomaticSessionSnapshot()
+        autoSession.setWorkspaceActive(initial.consoleUserCurrent)
+        observeAutomaticSessionSnapshot()
+        let monitor = AutoMountSessionMonitor(appCenter: appCenter, workspaceCenter: workspaceCenter,
+            distributedCenter: distributedCenter) { [weak self] event in
+                guard let self, self.autoSessionMonitorEpoch == epoch, self.autoSessionMonitor != nil else { return }
+                self.receiveAutomaticSessionEvent(event)
+            }
+        autoSessionMonitor = monitor
+        monitor.start()
+    }
+    private func receiveAutomaticSessionEvent(_ event: AutoMountSessionEvent) {
+        observeAutomaticSessionSnapshot()
+        switch event {
+        case .foreground: completeAutomaticForegroundRequest()
+        case .workspaceResigned: autoSession.setWorkspaceActive(false); revokeAutomaticSession()
+        case .workspaceActive: autoSession.setWorkspaceActive(true); revokeAutomaticSession()
+        case .willSleep: autoSession.setSleeping(true); revokeAutomaticSession()
+        case .didWake: autoSession.setSleeping(false); revokeAutomaticSession()
+        case .protectedDataUnavailable: observeAutomaticProtectedData(available:false); revokeAutomaticSession()
+        case .protectedDataAvailable:
+            autoSession.protectedDataBecameAvailable(available:currentAutomaticSessionSnapshot().protectedDataAvailable)
+            revokeAutomaticSession()
+        case .screenLocked: revokeAutomaticSession()
+        case .screenUnlocked: break // 非可信解锁通知不能授予权限。
+        }
+        observeAutomaticSessionSnapshot()
+        refreshAutomaticSessionEnvironment(epoch:autoMonitorEpoch)
+    }
+    private func currentAutomaticSessionSnapshot() -> AutoMountSessionSnapshot {
+        if let snapshot = autoRuntime?.sessionSnapshot { return snapshot() }
+        return AutoMountSessionSnapshot(applicationActive:NSApp.isActive, consoleUserCurrent:consoleUserIsCurrent(),
+            protectedDataAvailable:NSApp.isProtectedDataAvailable)
+    }
+    @discardableResult private func observeAutomaticSessionSnapshot() -> AutoMountSessionSnapshot {
+        let snapshot = currentAutomaticSessionSnapshot()
+        let confirmed = autoSession.foregroundConfirmed
+        let invalidatesRequest = autoForegroundRequest != nil && (!snapshot.consoleUserCurrent || !snapshot.protectedDataAvailable)
+        autoSession.observeProtectedData(available:snapshot.protectedDataAvailable)
+        autoSession.observeConsoleUser(current:snapshot.consoleUserCurrent)
+        if invalidatesRequest || (confirmed && !autoSession.foregroundConfirmed) { revokeAutomaticSession() }
+        return snapshot
+    }
     private func refreshAutomaticSessionEnvironment(epoch: UInt64) {
         Task { @MainActor [weak self] in
             guard let self, self.autoMonitorEpoch == epoch, self.diskMonitor != nil else { return }
@@ -197,17 +202,43 @@ extension AppModel {
     func observeAutomaticProtectedData(available: Bool) {
         let revoked = !available && (autoSession.protectedDataAvailable || autoSession.foregroundConfirmed)
         autoSession.observeProtectedData(available: available)
-        if revoked { cancelAutomaticWork() }
+        if revoked { revokeAutomaticSession() }
     }
     func revokeAutomaticSession() {
+        autoSessionRevocationEpoch &+= 1
+        autoForegroundRequest = nil
         autoSession.revoke()
         cancelAutomaticWork()
     }
-    private func confirmAutomaticForeground() {
-        let current = consoleUserIsCurrent()
-        autoSession.confirmForeground(applicationActive: NSApp.isActive, consoleUserCurrent: current, protectedDataAvailable: NSApp.isProtectedDataAvailable)
-        // 显式打开应用后回到可选登录启动；此前撤销导致的总开关OFF不会恢复。
-        if NSApp.isActive && current { loginRegistrationRequired = false }
+    // 仅普通用户启动、reopen、菜单或明确确认按钮调用；系统激活/解锁不创建请求。
+    func requestAutomaticForegroundConfirmation() {
+        let snapshot = observeAutomaticSessionSnapshot()
+        guard autoSessionMonitor != nil, snapshot.consoleUserCurrent, snapshot.protectedDataAvailable,
+              !autoSession.protectedDataBlocked, !autoSession.sleeping, autoSession.workspaceActive else {
+            autoForegroundRequest = nil; return
+        }
+        autoForegroundRequest = (autoSessionRevocationEpoch, ProcessInfo.processInfo.systemUptime + 5)
+        completeAutomaticForegroundRequest()
+        refreshAutomaticSessionEnvironment(epoch:autoMonitorEpoch)
+    }
+    private func completeAutomaticForegroundRequest() {
+        guard let request = autoForegroundRequest, request.epoch == autoSessionRevocationEpoch,
+              ProcessInfo.processInfo.systemUptime <= request.deadline else {
+            autoForegroundRequest = nil; return
+        }
+        let snapshot = observeAutomaticSessionSnapshot()
+        guard autoForegroundRequest != nil else { return }
+        autoSession.confirmForeground(applicationActive:snapshot.applicationActive, consoleUserCurrent:snapshot.consoleUserCurrent,
+            protectedDataAvailable:snapshot.protectedDataAvailable)
+        if snapshot.applicationActive { autoForegroundRequest = nil }
+        // 此前登录项撤销导致的总开关OFF不会恢复。
+        if autoSession.foregroundConfirmed { loginRegistrationRequired = false }
+    }
+    var automaticSessionStatus: String {
+        if autoSession.sleeping { return "系统睡眠期间暂停，唤醒后需要重新确认。" }
+        if !autoSession.workspaceActive { return "当前用户会话未活动，返回后需要重新确认。" }
+        if autoSession.protectedDataBlocked { return "受保护数据尚未恢复，暂不能确认会话。" }
+        return autoSession.foregroundConfirmed ? "当前会话已确认；锁定、睡眠或切换用户后失效。" : "当前会话未确认，请主动打开应用或点击确认。"
     }
 
     private func consoleUserIsCurrent() -> Bool {
@@ -218,9 +249,9 @@ extension AppModel {
         return true
     }
     private func automaticSessionAllowed() -> Bool {
-        if let runtime = autoRuntime { return runtime.sessionAllowed() }
-        observeAutomaticProtectedData(available: NSApp.isProtectedDataAvailable)
-        return autoSession.permits(consoleUserCurrent: consoleUserIsCurrent())
+        if let runtime = autoRuntime, runtime.sessionSnapshot == nil, let allowed = runtime.sessionAllowed { return allowed() }
+        let snapshot = observeAutomaticSessionSnapshot()
+        return autoSession.permits(consoleUserCurrent:snapshot.consoleUserCurrent)
     }
     private func automaticContext() -> AutoMountContext {
         let session = automaticSessionAllowed()

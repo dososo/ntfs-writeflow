@@ -56,3 +56,22 @@ python3 Tests/Compatibility/build_frontend_candidate.py --link-only --work-dir b
 ```sh
 xcrun clang -arch arm64 -mmacosx-version-min=15.4 -Wall -Wextra -Werror -c Tests/Compatibility/CtlByFSIDABI.c -o build/0.2.0/兼容后续研究/编号ABI-arm64-15.4.o
 ```
+
+
+## Intel 完整应用与 15.4 扩展隔离候选
+
+`build_app_candidate.py` 将明确 Git 提交中的必要源文件归档到全新副本，另展开固定 NTFS 源并复制已校验的双架构 config.h/静态库；在副本运行 XcodeGen 和 Xcode 构建，不复用生产生成工程或派生数据。除前述工具外需本地 XcodeGen。`--revision` 必须明确提供 HEAD 或提交号，未提交文件不会进入候选，结果绑定解析后的完整提交号。
+
+```sh
+python3 -m unittest discover -s Tests/Compatibility -p 'test_*.py'
+python3 Tests/Compatibility/build_app_candidate.py --mode intel26 --revision HEAD --engine-dir build/0.2.0/离线可复现候选-20261029 --output build/0.2.0/Intel完整候选-新的验收
+python3 Tests/Compatibility/build_app_candidate.py --mode mac15-prototype --revision HEAD --engine-dir build/0.2.0/离线可复现候选-20261029 --output build/0.2.0/15.4隔离候选-新的验收
+```
+
+第一种模式真实构建完整 Intel Release 应用，并逐个检查包内 Mach-O：必须恰好有宿主、FSKit 扩展、管理员助手，均为 x86_64、最低系统26；宿主和扩展 Info.plist 最低系统、三个组件身份与助手嵌入标识、LaunchDaemon 受限服务配置、展示图标均核验。另检查宿主/助手仍导入 `_funmount`，没有开发机私有动态库依赖。成功退出0，只表示完整包静态通过，不是 Intel 实机、签名、公证或授权通过。
+
+第二种模式仅在副本将已知的26可用存储属性改为相同可用性约束的计算属性；唯一匹配失败就停止。先独立构建、链接 ARM 和 Intel 的完整 FSKit 扩展并核验最低系统15.4，再构建两架构完整应用。只有编译错误全部是 `funmount` 仅26可用时，才记录预期安全阻断并退出78；其他错误或意外成功均失败退出1。保留正式 FD 卸载代码，不写 stub、不退回路径卸载，不改生产最低系统或签名。扩展候选可以完整链接，完整旧系统应用仍未可用。
+
+本轮冻结基线 `27fe68ece08f9b2fba20b93cce23a4e5bbd462f3` 实际结果：Intel26完整应用和追加静态检查通过；15.4双架构扩展链接通过，完整应用均因 `funmount` 退出65，工具总退出78；兼容工具共24项测试通过。生成目录分别是 `build/0.2.0/Intel完整隔离候选-27fe68e/` 和 `build/0.2.0/15.4完整隔离原型-27fe68e/`。这些结果不覆盖基线之后的源代码，最终提交后需用新提交号和全新输出目录复跑。
+
+核查文件：`候选结果.json` 记录应用/引擎提交、输入归档及工具 SHA、构建命令/退出码/日志、产品路径/哈希；`仅副本属性适配.patch` 便于检查修改范围。未覆盖目标机启动、FSKit系统加载、服务授权、磁盘读写/弹出、旧系统运行与性能。最小回滚为不集成候选工具及副本；所有生成证据保留，生产源和部署要求没有本轮变更。

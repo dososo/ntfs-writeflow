@@ -50,6 +50,8 @@ import AppKit
     weak var model: AppModel?
     var windowOpener: OpenWindowAction?
 
+    func applicationWillFinishLaunching(_ notification: Notification) { model?.startAutomaticSessionMonitoring() }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         let loginLaunch = LoginLaunchService.wasLaunchedAtLogin
         Task { await model?.startMonitoring(launchedAtLogin: loginLaunch) }
@@ -61,6 +63,7 @@ import AppKit
             NSApp.unhide(nil)
             windowOpener?(id: "main")
             NSApp.activate()
+            model?.requestAutomaticForegroundConfirmation()
         }
     }
 
@@ -69,6 +72,7 @@ import AppKit
         NSApp.unhide(nil)
         windowOpener?(id: "main")
         NSApp.activate()
+        model?.requestAutomaticForegroundConfirmation()
         return false
     }
 

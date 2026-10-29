@@ -44,6 +44,8 @@ struct WorkbenchSettingsView: View {
                 Text("首次在磁盘详情选择自动只读或读写；之后新插入时自动处理。登录或解锁后先打开一次应用确认会话；之后关闭窗口继续工作，退出应用后停止。遇到其他驱动或身份不明会暂停。")
                     .font(.caption).foregroundStyle(.secondary)
                 Text(model.autoStatus).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                Text(model.automaticSessionStatus).font(.caption).foregroundStyle(.secondary)
+                Button("确认当前会话") { model.requestAutomaticForegroundConfirmation() }
                 Toggle("登录时启动", isOn: Binding(get: { model.loginEnabled }, set: { model.setLoginEnabled($0) }))
                 LabeledContent("登录项状态", value: model.loginStatus)
             }
@@ -104,6 +106,7 @@ struct WorkbenchMenu: View {
             NSApp.unhide(nil)
             openWindow(id: "main")
             NSApp.activate()
+            model.requestAutomaticForegroundConfirmation()
         }
         Button("刷新磁盘") { Task { await model.refresh() } }.disabled(model.isBusy)
         Button("诊断") {

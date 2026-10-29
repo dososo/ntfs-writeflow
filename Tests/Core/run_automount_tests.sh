@@ -4,7 +4,12 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT_DIR"
 mkdir -p build/core-tests
-SWIFT=(xcrun swiftc -target arm64-apple-macos26.0 -swift-version 6 -warnings-as-errors)
+TEST_ARCH="${NTFS_TEST_ARCH:-arm64}"
+case "$TEST_ARCH" in
+  arm64|x86_64) ;;
+  *) echo '测试架构仅支持 arm64 或 x86_64。' >&2; exit 2 ;;
+esac
+SWIFT=(xcrun swiftc -target "${TEST_ARCH}-apple-macos26.0" -swift-version 6 -warnings-as-errors)
 "${SWIFT[@]}" Sources/Core/VolumeRecord.swift Sources/Core/AutoMountPolicy.swift \
   Sources/App/Services/AutoMountCoordinator.swift Tests/Core/AutoMountPolicyTests.swift \
   -o build/core-tests/自动挂载策略验证
@@ -38,3 +43,12 @@ build/core-tests/会话状态验证
   Sources/App/AppModel*.swift Tests/Core/AppModelLoginRevocationTests.swift \
   -o build/core-tests/登录撤销验证
 build/core-tests/登录撤销验证
+
+"${SWIFT[@]}" Sources/Core/AutoMountSessionState.swift Tests/Core/AutoMountSessionTransitionTests.swift \
+  -o build/core-tests/会话组合验证
+build/core-tests/会话组合验证
+"${SWIFT[@]}" -import-objc-header Configuration/App-Bridging-Header.h \
+  Sources/Core/*.swift Sources/HelperShared/*.swift Sources/App/Services/*.swift \
+  Sources/App/AppModel*.swift Tests/Core/AppModelSessionNotificationTests.swift \
+  -o build/core-tests/会话通知接线验证
+build/core-tests/会话通知接线验证

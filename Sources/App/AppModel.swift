@@ -47,7 +47,10 @@ import ServiceManagement
     @ObservationIgnored var autoSuppressedWholeMedia: Set<UInt64> = []
     @ObservationIgnored private var disappearedMediaIDs: Set<UInt64> = []
     @ObservationIgnored var autoEnvironmentQueryID: UInt64 = 0
-    @ObservationIgnored var autoObservers: [NSObjectProtocol] = []
+    @ObservationIgnored var autoSessionMonitor: AutoMountSessionMonitor?
+    @ObservationIgnored var autoSessionMonitorEpoch: UInt64 = 0
+    @ObservationIgnored var autoSessionRevocationEpoch: UInt64 = 0
+    @ObservationIgnored var autoForegroundRequest: (epoch: UInt64, deadline: TimeInterval)?
     var autoIsOperating = false
     var autoStatus = "自动挂载已关闭。"
     var loginState = LoginLaunchState.pending
