@@ -137,11 +137,14 @@ bash Tests/Core/run_eject_tests.sh
 xcrun swiftc -target arm64-apple-macos26.0 -swift-version 6 \
   -import-objc-header Configuration/App-Bridging-Header.h \
   Sources/Core/VolumeRecord.swift Sources/HelperShared/*.swift \
-  Sources/App/Services/MountedFileSystemReader.swift Tests/Core/EjectSystemIntegration.swift \
+  Sources/App/Services/MountedFileSystemReader.swift \
+  Sources/App/Services/PrivilegedMountClient.swift Sources/App/Services/AuthorizedDeviceHandle.swift \
+  Sources/App/Services/DiskService.swift Sources/App/Services/RetainedDiskBinding.swift \
+  Tests/Core/EjectSystemIntegration.swift \
   -o build/eject-0.1.1/弹出系统验收
 ```
 
-编译不是执行授权。测试程序还需由相同开发者团队按正式应用标识签名才能连接已安装助手。普通临时签名无法通过；不得更改助手签名要求来让测试通过。运行前确保已有本机 `build/engine/arm64/ntfsprogs/mkntfs`，并有能够正常读写挂载新建 NTFS 镜像的系统或其他驱动，以独立验证该路径。
+编译不是执行授权。测试程序还需由相同开发者团队按正式应用标识签名才能连接已安装助手。普通临时签名无法通过；不得更改助手签名要求来让测试通过。运行前确保已有本机 `build/engine/arm64/ntfsprogs/mkntfs`，并已安装启用本版本正式 `blntfs` 扩展。测试显式携带本次介质身份，将新建镜像挂到当前用户专用目录；回读类型、来源、所有者和介质身份，通过生产 `DiskService.unmount` 卸载自有卷后，再执行助手准备与前台弹出。无需 Paragon。
 
 每次执行保留唯一目录和完整结果，失败不会按旧设备编号自动清理、不会强制卸载。若报告残留，应先核对该报告的镜像映射及原介质身份，再正常恢复；不能拿历史编号操作设备。纯策略通过不代表此集成通过，以具体运行记录为准。
 
@@ -159,7 +162,7 @@ xcrun swiftc -target arm64-apple-macos26.0 -swift-version 6 \
 | 保持额外原始设备只读句柄 | 约 3 秒有界等待后明确拒绝，原介质及摘要保留 |
 | 关闭额外句柄后弹出未挂载整盘 | 成功弹出，原对象及映射消失，摘要不变 |
 
-镜像中的其他驱动对照使用本机已有的 Paragon；这只是本机独立测试条件，**应用本身的 NTFS 读写使用随包的开源引擎，不要求安装或购买 Paragon**。没有该驱动的开发者仍可构建与使用应用，但不能原样宣称这组第三方驱动对照已在自己的机器通过。
+0.1.1 历史镜像对照使用本机当时已有的 Paragon；0.1.2 测试已改为本应用 `blntfs` 和生产自有卷卸载流程，消除对其他驱动的依赖。历史对照只是当时独立测试条件，**应用本身的 NTFS 读写使用随包的开源引擎，不要求安装或购买 Paragon**。没有该驱动的开发者仍可构建与使用应用，但不能原样宣称这组第三方驱动对照已在自己的机器通过。
 
 当前自动镜像集成未覆盖真实硬件热拔插/掉电、同一物理磁盘多分区实测、其他用户会话以及 Windows；这些应单独列验收，不从本组结果推断。本轮另已完成本应用 blntfs 演示镜像与真实固定外部盘的图形界面弹出验收；详细证据与候选签名记录由发布验收保存。
 

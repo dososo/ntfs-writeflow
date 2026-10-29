@@ -182,7 +182,8 @@ import ServiceManagement
         guard panel.runModal() == .OK, let url = panel.url else { return }
         let text = """
         NTFS 畅写 · NTFS WriteFlow
-        开发验证版
+        版本：\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "未知")（\(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "未知")）预览版
+        读写引擎：NTFS-3G（FSKit 适配）
         生成时间：\(Date().formatted())
         系统：\(ProcessInfo.processInfo.operatingSystemVersionString)
         扩展状态：\(extensionDiagnostic.title)
@@ -191,7 +192,7 @@ import ServiceManagement
         NTFS 卷数：\(ntfsVolumes.count)
         无法读取的设备数：\(unreadableCount)
         状态是否为本次有效读取：\(inventoryIsCurrent ? "是" : "否")
-        自有后端：系统托管镜像读写已验证；真实介质与完整发布验收另见版本说明
+        验证范围：以本版本发布说明为准；历史测试不代表本次运行已验收
         说明：此文件不包含卷名、挂载路径、卷标识、账户或用户文件内容。
         """
         do { try text.write(to: url, atomically: true, encoding: .utf8) }

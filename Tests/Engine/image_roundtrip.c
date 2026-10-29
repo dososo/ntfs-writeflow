@@ -9,7 +9,7 @@
 #include <unistd.h>
 #include "ntfs_fskit.h"
 
-typedef struct { int fd; int writable; int fail_sync; int64_t size; } image_device;
+typedef struct { int fd; int writable; int fail_sync; int sync_calls; int fail_at_sync; int fail_once_at_sync; int injected_failures; int64_t size; } image_device;
 static int checks;
 #define REQUIRE(condition, message) do { checks++; if (!(condition)) { \
     fprintf(stderr, "失败：%s（errno=%d）\n", message, errno); exit(1); \
@@ -31,7 +31,12 @@ int64_t nfsk_block_pwrite(void *opaque, const void *buffer, int64_t offset, int6
 }
 int nfsk_block_sync(void *opaque) {
     image_device *d = opaque;
-    if (d->fail_sync) return -EIO;
+    d->sync_calls++;
+    if (d->fail_sync || (d->fail_at_sync && d->sync_calls >= d->fail_at_sync) ||
+        d->sync_calls == d->fail_once_at_sync) {
+        d->injected_failures++;
+        return -EIO;
+    }
     return fsync(d->fd) == 0 ? 0 : -errno;
 }
 uint64_t nfsk_block_total_bytes(void *opaque) { return ((image_device *)opaque)->size; }
@@ -85,7 +90,7 @@ int main(int argc, char **argv) {
         device.fail_sync = 0;
         (void)nfsk_sync(v);
         REQUIRE(nfsk_sync(v) == 0, "移除同步故障后可恢复");
-        nfsk_umount(v);
+        REQUIRE(nfsk_umount(v) == 0, "正常关闭成功");
         REQUIRE(close(device.fd) == 0, "关闭镜像文件描述符");
         device.fd = open(argv[2], O_RDWR | O_NOFOLLOW);
         REQUIRE(device.fd >= 0, "重新打开镜像文件描述符");
@@ -108,7 +113,26 @@ int main(int argc, char **argv) {
         REQUIRE(nfsk_truncate(v, item, 0) == -EROFS, "只读卷拒绝截断");
         REQUIRE(nfsk_remove(v, dir, "最终.bin") == -EROFS, "只读卷拒绝删除");
     } else REQUIRE(nfsk_sync(v) == 0, "关闭前同步");
-    nfsk_umount(v);
+    if (!readonly) {
+        /* Preflight success must not mask a failure during the consuming close. */
+        REQUIRE(nfsk_sync(v) == 0, "关闭故障前的预同步成功");
+        device.fail_at_sync = device.sync_calls + 1;
+        REQUIRE(nfsk_umount(v) == -EIO, "关闭阶段同步失败必须回传");
+        device.fail_at_sync = 0;
+        v = nfsk_mount(&device, false, &error);
+        REQUIRE(v != NULL, "为最终关闭同步故障重新打开卷");
+        REQUIRE(nfsk_sync(v) == 0, "最终关闭故障前预同步成功");
+        int close_start = device.sync_calls;
+        int previous_failures = device.injected_failures;
+        /* nfsk_umount internal nfsk_sync succeeds; only the next backend sync
+         * inside ntfs_umount fails once. Later cleanup syncs succeed. */
+        device.fail_once_at_sync = close_start + 2;
+        REQUIRE(nfsk_umount(v) == -EIO, "仅最终ntfs_umount同步失败仍回传EIO");
+        REQUIRE(device.sync_calls >= close_start + 2 &&
+                device.injected_failures == previous_failures + 1,
+                "最终关闭仅第二次同步注入一次失败");
+        device.fail_once_at_sync = 0;
+    } else REQUIRE(nfsk_umount(v) == 0, "只读关闭成功");
     REQUIRE(close(device.fd) == 0, "结束时关闭镜像");
     printf("检查总数：%d；失败：0\n", checks);
     return 0;

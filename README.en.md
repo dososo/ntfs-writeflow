@@ -12,17 +12,17 @@ Read and write NTFS on your Mac, with a clear view of your disks.
 [![macOS](https://img.shields.io/badge/macOS-26%2B-23334B.svg)](#install)
 [![Architecture](https://img.shields.io/badge/Architecture-Apple%20Silicon-168B86.svg)](#install)
 [![Status](https://img.shields.io/badge/Status-Development%20candidate-B66C24.svg)](#validation-and-limits)
-[![Version](https://img.shields.io/badge/Version-0.1.1--Preview-23334B.svg)](https://github.com/dososo/ntfs-writeflow/releases/tag/v0.1.1)
+[![Version](https://img.shields.io/badge/Version-0.1.2--Preview-23334B.svg)](https://github.com/dososo/ntfs-writeflow/releases/tag/v0.1.2)
 [![Built with](https://img.shields.io/badge/SwiftUI%20%2B%20FSKit%20%2B%20NTFS--3G-23334B.svg)](#architecture)
 
 <p>
-  <a href="https://github.com/dososo/ntfs-writeflow/releases/download/v0.1.1/NTFS-WriteFlow-0.1.1-arm64.dmg"><strong>⬇ Download for Mac (DMG)</strong></a>
+  <a href="https://github.com/dososo/ntfs-writeflow/releases/download/v0.1.2/NTFS-WriteFlow-0.1.2-arm64.dmg"><strong>⬇ Download for Mac (DMG)</strong></a>
   &nbsp;·&nbsp;
-  <a href="https://github.com/dososo/ntfs-writeflow/releases/download/v0.1.1/NTFS-WriteFlow-0.1.1-arm64.zip">Download ZIP</a>
+  <a href="https://github.com/dososo/ntfs-writeflow/releases/download/v0.1.2/NTFS-WriteFlow-0.1.2-arm64.zip">Download ZIP</a>
   &nbsp;·&nbsp;
-  <a href="https://github.com/dososo/ntfs-writeflow/releases/tag/v0.1.1">All release assets</a>
+  <a href="https://github.com/dososo/ntfs-writeflow/releases/tag/v0.1.2">All release assets</a>
 </p>
-<p><sub>0.1.1 Preview · Apple Silicon · macOS 26 or later</sub></p>
+<p><sub>0.1.2 Preview · Apple Silicon · macOS 26 or later</sub></p>
 
 </div>
 
@@ -79,11 +79,13 @@ Free distribution and clear data-operation boundaries are both part of the produ
 
 These are actual app screenshots using the dedicated `WriteFlow Demo` image. Temporary device numbers and mount paths in the screenshots are not commands to reuse on another Mac.
 
+0.1.2 reports close-stage errors and clarifies diagnostics. See the [validation record and limits (Chinese)](发布/0.1.2验收记录.md).
+
 ## Install
 
 > **Target:** macOS 26 or later · Apple Silicon. The tested host runs macOS 26.6.2; Intel, older macOS versions, and every macOS 26 point release have not been validated.
 
-Download the [0.1.1 preview release](https://github.com/dososo/ntfs-writeflow/releases/tag/v0.1.1): [DMG installer](https://github.com/dososo/ntfs-writeflow/releases/download/v0.1.1/NTFS-WriteFlow-0.1.1-arm64.dmg) or [app ZIP](https://github.com/dososo/ntfs-writeflow/releases/download/v0.1.1/NTFS-WriteFlow-0.1.1-arm64.zip). The same release includes complete corresponding source, `SHA256SUMS.txt`, and distribution verification records. This remains a development preview.
+Download the [0.1.2 preview release](https://github.com/dososo/ntfs-writeflow/releases/tag/v0.1.2): [DMG installer](https://github.com/dososo/ntfs-writeflow/releases/download/v0.1.2/NTFS-WriteFlow-0.1.2-arm64.dmg) or [app ZIP](https://github.com/dososo/ntfs-writeflow/releases/download/v0.1.2/NTFS-WriteFlow-0.1.2-arm64.zip). The same release includes complete corresponding source, `SHA256SUMS.txt`, and distribution verification records. This remains a development preview.
 
 Installation:
 

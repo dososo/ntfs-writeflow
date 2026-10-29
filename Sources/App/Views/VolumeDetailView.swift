@@ -32,6 +32,10 @@ struct VolumeDetailView: View {
                     }
                     Spacer()
                 }
+                if volume.isNTFS {
+                    Label("预览版：重要数据请先备份。Windows 休眠、快速启动或磁盘异常可能影响安全读写；请先在 Windows 中正常关闭并检查磁盘。", systemImage: "exclamationmark.shield")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
                 HStack(spacing: 10) {
                     Button(action: open) { Label("在 Finder 中打开", systemImage: "folder") }
                         .buttonStyle(.borderedProminent)
