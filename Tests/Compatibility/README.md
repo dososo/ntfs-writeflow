@@ -9,17 +9,50 @@ xcrun swiftc -swift-version 5 -warnings-as-errors -target arm64-apple-macos13.0 
 build/0.2.0/低系统候选验证记录/只读观察器测试
 ```
 
-`build_frontend_candidate.py` 针对固定 NTFS-3G 官方源码及 macFUSE 官方 C API 头文件编译 13.0/14.0 × arm64/x86_64 的前端对象。它依赖本轮独立构建目录中的引擎配置/静态库与头文件，缺失时明确失败，不改正式引擎配置。运行：
+`prepare_candidate.py` 已补齐全新的离线准备入口，不再依赖手工生成的引擎配置。需要本地 Python 3.12+、Xcode 命令行工具、Git、Make、Autoconf、Automake、GNU Libtool；工具不会自动安装依赖。固定 NTFS 源在 `ThirdParty/ntfs-3g`，提交必须为 `7f0f841fc52cf719106c5c93bafe465004e36816` 且已跟踪文件无改动。macFUSE 的 10 份官方头文件及两份许可证使用 `macfuse_header_pins.json` 中的固定 SHA256，不能用缓存目录自己提供的散列表冒充校验。
+
+若尚无缓存，先单独联网获取官方固定提交的文本源码及许可证（不下载二进制、不安装驱动），之后可以完全离线构建。缓存目录必须全新，失败现场保留：
 
 ```sh
-python3 Tests/Compatibility/build_frontend_candidate.py --compile-only
-python3 Tests/Compatibility/build_frontend_candidate.py --link-only
+python3 - <<'PYFETCH'
+import hashlib, json, subprocess
+from pathlib import Path
+pin = "7a6cdd2b6e11071a706f4295aa931c65223ba953"
+pins = json.loads(Path("Tests/Compatibility/macfuse_header_pins.json").read_text())
+out = Path("build/0.2.0/官方头文件缓存")
+out.mkdir(parents=True, exist_ok=False)
+for name, digest in pins.items():
+    source = name if name.startswith("COPYING") else "include/" + name
+    url = "https://raw.githubusercontent.com/macfuse/library/" + pin + "/" + source
+    subprocess.run(["curl", "--fail", "--location", "--proto", "=https", "--max-time", "30", url, "--output", str(out / name)], check=True)
+    assert hashlib.sha256((out / name).read_bytes()).hexdigest() == digest, name
+print("12份固定官方文本校验通过")
+PYFETCH
 ```
 
-第二条只在本机已有 macFUSE 用户态运行时才链接；缺失返回 78，不下载替代品、不链接虚假 stub、不运行任何文件系统。即使链接成功也不代表内核后端、系统授权或旧系统可用；当前本机缺少运行时，真实挂载原型被明确阻断。
+正式准备命令只读取本地来源，输出限定在本仓库 build 下的全新目录；拒绝重用目录、符号链接路径、损坏头文件和源码提交变化。示例使用新的目录名，若已有则换名，不删除历史现场：
 
-构建来源、官方头文件提交、12 个前端对象、独立 13.0 静态引擎和只读探测工具记录位于 `build/0.2.0/旧系统独立后端/`。该目录的生成产物未纳入源码，不能仅下载脚本就假定依赖已准备好。
+```sh
+python3 -m unittest discover -s Tests/Compatibility -p test_prepare_candidate.py
+python3 Tests/Compatibility/prepare_candidate.py --headers-dir build/0.2.0/官方头文件缓存 --output build/0.2.0/独立离线候选-首次
+python3 Tests/Compatibility/build_frontend_candidate.py --compile-only --work-dir build/0.2.0/独立离线候选-首次
+python3 Tests/Compatibility/build_frontend_candidate.py --link-only --work-dir build/0.2.0/独立离线候选-首次
+```
+
+准备入口通过 git archive 固定提交，在独立副本生成配置；ARM/Intel 分目录配置 13.0 静态引擎，再编译 13.0/14.0 × 两架构的 12 个官方前端对象。既有自有 libgcrypt 宏只复制到候选副本；不改引擎源或产品 build/engine，不运行 ntfs-3g、不做全局安装。记录命令、编译输出、工具版本、SDK、源码/宏/库/config.h SHA256；前端重跑时检查准备产物指纹。这是流程可重复，不宣称不同 SDK/工具链生成逐字节相同的二进制。
+
+链接命令只在本机已有 macFUSE 用户态运行时才链接；缺失返回 78，不下载替代品、不链接虚假 stub、不运行任何文件系统。即使链接成功也不代表内核后端、系统授权或旧系统可用；当前本机缺少运行时，真实挂载原型被明确阻断。
+
+前轮构建来源、官方头文件提交、12 个前端对象、独立 13.0 静态引擎和只读探测工具记录位于 `build/0.2.0/旧系统独立后端/`。该目录的生成产物未纳入源码，不能仅下载脚本就假定依赖已准备好。
 
 本轮在当前 macOS 26 上运行官方 ARM 只读探测程序，仅访问刚创建的 64 MiB 普通 NTFS 镜像文件，探测前后 SHA256 不变；没有实际 VFS 挂载。Intel 程序仅编译和检查 Mach-O，没有执行。上游 `ntfs-3g.probe --readwrite` 会用可写 flags 打开引擎，不能拿来替换产品 RO|FORENSIC 的写前安全门禁；本轮从未执行该模式。
 
 检验边界：这些结果证明代码/ABI 候选可继续研究，不能证明 macOS 13/14、Intel 实机或安全卸载支持。回滚只需不将独立候选集成到生产；正式源文件无本轮更改。没有设备操作验收，也没有发布兼容声明。
+
+本轮实际运行：15 项准备边界测试通过，使用前轮已校验缓存在全新 `build/0.2.0/离线可复现候选-20261029/` 真实完成双架构静态库及 12 对象编译；链接缺运行时退出 78。生产两架构库 SHA 和引擎提交/差异前后一致。所有测试临时目录保留，不批量清理。
+
+`CtlByFSIDABI.c` 仅静态断言公开结构/常量，不含 sysctl 或卸载调用。13.0/14.0/15.4 × 两架构的六个对象已编译；详细官方源码研究与未闭合的编号复用窗口见[旧系统卸载补充研究](../../发布/旧系统卸载补充研究.md)。编译例：
+
+```sh
+xcrun clang -arch arm64 -mmacosx-version-min=15.4 -Wall -Wextra -Werror -c Tests/Compatibility/CtlByFSIDABI.c -o build/0.2.0/兼容后续研究/编号ABI-arm64-15.4.o
+```

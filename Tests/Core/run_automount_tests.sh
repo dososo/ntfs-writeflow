@@ -29,3 +29,12 @@ build/core-tests/自动挂载模型验证
   Sources/App/AppModel*.swift Tests/Core/AppModelDisappearanceTests.swift \
   -o build/core-tests/消失卷列表验证
 build/core-tests/消失卷列表验证
+
+"${SWIFT[@]}" Sources/Core/AutoMountSessionState.swift Tests/Core/AutoMountSessionStateTests.swift \
+  -o build/core-tests/会话状态验证
+build/core-tests/会话状态验证
+"${SWIFT[@]}" -import-objc-header Configuration/App-Bridging-Header.h \
+  Sources/Core/*.swift Sources/HelperShared/*.swift Sources/App/Services/*.swift \
+  Sources/App/AppModel*.swift Tests/Core/AppModelLoginRevocationTests.swift \
+  -o build/core-tests/登录撤销验证
+build/core-tests/登录撤销验证

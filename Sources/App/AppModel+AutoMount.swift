@@ -8,6 +8,7 @@ import Foundation
     var mount: (VolumeRecord, Bool) async throws -> Void
     var environment: () async -> AutoMountEnvironment
     var sessionAllowed: () -> Bool
+    var loginState: (() -> LoginLaunchState)? = nil
 }
 
 extension AppModel {
@@ -15,8 +16,10 @@ extension AppModel {
         guard diskMonitor == nil else { return }
         autoMonitorEpoch &+= 1
         let epoch = autoMonitorEpoch
+        self.loginRegistrationRequired = launchedAtLogin
         refreshLoginStatus()
-        sessionUnlocked = NSApp.isActive && consoleUserIsCurrent()
+        autoSession.observeProtectedData(available: NSApp.isProtectedDataAvailable)
+        if NSApp.isActive { confirmAutomaticForeground() }
         let monitor = DiskEventMonitor(onEvent: { [weak self] event in
             Task { @MainActor [weak self] in
                 guard let self, self.autoMonitorEpoch == epoch, self.diskMonitor != nil else { return }
@@ -33,30 +36,43 @@ extension AppModel {
         let center = DistributedNotificationCenter.default()
         for (name, unlocked) in [("com.apple.screenIsLocked", false), ("com.apple.screenIsUnlocked", true)] {
             autoObservers.append(center.addObserver(forName: Notification.Name(name), object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    if !unlocked { self.sessionUnlocked = false; self.cancelAutomaticWork() }
-                    await self.refreshAutoEnvironment()
+                MainActor.assumeIsolated {
+                    guard let self, self.autoMonitorEpoch == epoch, self.diskMonitor != nil else { return }
+                    if !unlocked { self.revokeAutomaticSession() }
+                    self.refreshAutomaticSessionEnvironment(epoch: epoch)
                 }
             })
         }
         autoObservers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.sessionDidResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.sessionUnlocked = false; self?.cancelAutomaticWork() }
+            MainActor.assumeIsolated {
+                guard let self, self.autoMonitorEpoch == epoch, self.diskMonitor != nil else { return }
+                self.revokeAutomaticSession()
+            }
         })
         autoObservers.append(NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                self.sessionUnlocked = self.consoleUserIsCurrent()
-                await self.refreshAutoEnvironment()
+            MainActor.assumeIsolated {
+                guard let self, self.autoMonitorEpoch == epoch, self.diskMonitor != nil else { return }
+                self.confirmAutomaticForeground()
+                self.refreshAutomaticSessionEnvironment(epoch: epoch)
             }
         })
         for name in [NSWorkspace.sessionDidBecomeActiveNotification, NSWorkspace.didWakeNotification, NSWorkspace.willSleepNotification] {
             autoObservers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    self.sessionUnlocked = false
-                    self.cancelAutomaticWork()
-                    await self.refreshAutoEnvironment()
+                MainActor.assumeIsolated {
+                    guard let self, self.autoMonitorEpoch == epoch, self.diskMonitor != nil else { return }
+                    self.revokeAutomaticSession()
+                    self.refreshAutomaticSessionEnvironment(epoch: epoch)
+                }
+            })
+        }
+        for name in [Notification.Name.NSApplicationProtectedDataWillBecomeUnavailable,
+                     Notification.Name.NSApplicationProtectedDataDidBecomeAvailable] {
+            autoObservers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] notification in
+                let unavailable = notification.name == .NSApplicationProtectedDataWillBecomeUnavailable
+                MainActor.assumeIsolated {
+                    guard let self, self.autoMonitorEpoch == epoch, self.diskMonitor != nil else { return }
+                    self.observeAutomaticProtectedData(available: !unavailable && NSApp.isProtectedDataAvailable)
+                    self.refreshAutomaticSessionEnvironment(epoch: epoch)
                 }
             })
         }
@@ -68,7 +84,7 @@ extension AppModel {
     func stopMonitoring() {
         autoMonitorEpoch &+= 1
         autoEnvironmentQueryID &+= 1
-        cancelAutomaticWork()
+        revokeAutomaticSession()
         for id in autoGenerations.keys { autoCoordinator.disappeared(mediaID: id) }
         autoGenerations.removeAll(); autoNative.removeAll(); autoCanonical.removeAll()
         autoSuppressedMedia.removeAll(); autoSuppressedWholeMedia.removeAll()
@@ -83,10 +99,25 @@ extension AppModel {
     }
 
     func refreshLoginStatus() {
-        loginEnabled = LoginLaunchService.enabled
-        loginStatus = LoginLaunchService.status
+        if let runtime = autoRuntime {
+            if let state = runtime.loginState { applyLoginState(state()) }
+        } else { applyLoginState(LoginLaunchService.state) }
     }
+    func applyLoginState(_ state: LoginLaunchState) {
+        let revoked = loginState.isEnabled && !state.isEnabled
+        let loginLaunchRejected = loginRegistrationRequired && !state.isEnabled && autoEnabled
+        loginState = state
+        if revoked || loginLaunchRejected {
+            autoEnabled = false
+            autoStatus = "登录启动已被关闭或不可确认，自动管理已停止。"
+        }
+    }
+
     func setLoginEnabled(_ enabled: Bool) {
+        if !enabled && autoEnabled {
+            autoEnabled = false
+            autoStatus = "已停止自动管理；登录项关闭结果见下方状态。"
+        }
         do { try LoginLaunchService.setEnabled(enabled) }
         catch { errorMessage = "登录启动设置失败：\(error.localizedDescription)" }
         refreshLoginStatus()
@@ -112,7 +143,7 @@ extension AppModel {
         autoPending.removeValue(forKey: id)
         diskMonitor?.suppress(mediaID: id)
         // 用户在界面作出选择是解锁状态的辅助依据；登录后台状态未知时不会推定解锁。
-        if NSApp.isActive { sessionUnlocked = true }
+        if NSApp.isActive { confirmAutomaticForeground() }
         updateAutomaticApproval()
         autoStatus = "已保存\(mode.title)，下次新接入时生效；当前挂载不会被接管。"
     }
@@ -140,6 +171,7 @@ extension AppModel {
     }
 
     func refreshAutoEnvironment() async {
+        refreshLoginStatus()
         autoEnvironmentQueryID &+= 1
         let query = autoEnvironmentQueryID
         let enabledBefore = autoEnabled
@@ -156,6 +188,28 @@ extension AppModel {
         updateAutomaticApproval()
     }
 
+    private func refreshAutomaticSessionEnvironment(epoch: UInt64) {
+        Task { @MainActor [weak self] in
+            guard let self, self.autoMonitorEpoch == epoch, self.diskMonitor != nil else { return }
+            await self.refreshAutoEnvironment()
+        }
+    }
+    func observeAutomaticProtectedData(available: Bool) {
+        let revoked = !available && (autoSession.protectedDataAvailable || autoSession.foregroundConfirmed)
+        autoSession.observeProtectedData(available: available)
+        if revoked { cancelAutomaticWork() }
+    }
+    func revokeAutomaticSession() {
+        autoSession.revoke()
+        cancelAutomaticWork()
+    }
+    private func confirmAutomaticForeground() {
+        let current = consoleUserIsCurrent()
+        autoSession.confirmForeground(applicationActive: NSApp.isActive, consoleUserCurrent: current, protectedDataAvailable: NSApp.isProtectedDataAvailable)
+        // 显式打开应用后回到可选登录启动；此前撤销导致的总开关OFF不会恢复。
+        if NSApp.isActive && current { loginRegistrationRequired = false }
+    }
+
     private func consoleUserIsCurrent() -> Bool {
         guard let dictionary = CGSessionCopyCurrentDictionary() as? [String: Any],
               (dictionary[kCGSessionUserIDKey as String] as? NSNumber)?.uint32Value == geteuid(),
@@ -165,7 +219,8 @@ extension AppModel {
     }
     private func automaticSessionAllowed() -> Bool {
         if let runtime = autoRuntime { return runtime.sessionAllowed() }
-        return sessionUnlocked && consoleUserIsCurrent()
+        observeAutomaticProtectedData(available: NSApp.isProtectedDataAvailable)
+        return autoSession.permits(consoleUserCurrent: consoleUserIsCurrent())
     }
     private func automaticContext() -> AutoMountContext {
         let session = automaticSessionAllowed()
@@ -174,6 +229,7 @@ extension AppModel {
             competition: autoEnvironment.isClear ? .clear : .unknown)
     }
     func updateAutomaticApproval() {
+        refreshLoginStatus()
         let context = automaticContext()
         guard context.enabled, context.consoleUserActive, context.sessionUnlocked,
               context.extensionReady, context.helperReady, context.competition == .clear else {
@@ -255,6 +311,7 @@ extension AppModel {
                 autoCoordinator.observe(current, initial: false)
                 return (current, automaticContext())
             }, mount: { [self] value, mode in
+                refreshLoginStatus()
                 guard autoGenerations[id] == value.generation, !autoSuppressedMedia.contains(id),
                       value.volume.wholeMediaRegistryID.map({ !autoSuppressedWholeMedia.contains($0) }) ?? true,
                       automaticSessionAllowed(), autoEnabled,

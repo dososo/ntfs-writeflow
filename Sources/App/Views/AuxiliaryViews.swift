@@ -100,11 +100,18 @@ struct WorkbenchMenu: View {
         }
         Divider()
         Button("打开主窗口") {
+            NSApp.setActivationPolicy(.regular)
+            NSApp.unhide(nil)
             openWindow(id: "main")
-            NSApp.activate(ignoringOtherApps: true)
+            NSApp.activate()
         }
         Button("刷新磁盘") { Task { await model.refresh() } }.disabled(model.isBusy)
-        Button("诊断") { openWindow(id: "diagnostics") }
+        Button("诊断") {
+            NSApp.setActivationPolicy(.regular)
+            NSApp.unhide(nil)
+            openWindow(id: "diagnostics")
+            NSApp.activate()
+        }
         SettingsLink { Text("设置…") }
         Divider()
         Button("退出 NTFS 畅写") { NSApp.terminate(nil) }

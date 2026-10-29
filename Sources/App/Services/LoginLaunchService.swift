@@ -1,15 +1,31 @@
 import AppKit
 import ServiceManagement
 
-@MainActor enum LoginLaunchService {
-    static var enabled: Bool { SMAppService.mainApp.status == .enabled }
-    static var status: String {
-        switch SMAppService.mainApp.status {
+enum LoginLaunchState: Sendable {
+    case pending, enabled, requiresApproval, notRegistered, notFound, unknown
+
+    var isEnabled: Bool { self == .enabled }
+    var title: String {
+        switch self {
+        case .pending: return "尚未查询"
         case .enabled: return "已启用"
         case .requiresApproval: return "等待在系统设置批准"
         case .notRegistered: return "未启用"
         case .notFound: return "系统未找到当前应用"
-        @unknown default: return "系统返回未知状态"
+        case .unknown: return "系统返回未知状态"
+        }
+    }
+}
+
+@MainActor enum LoginLaunchService {
+    // 同一次系统读取同时决定开关和文本，避免两次查询之间状态变化。
+    static var state: LoginLaunchState {
+        switch SMAppService.mainApp.status {
+        case .enabled: return .enabled
+        case .requiresApproval: return .requiresApproval
+        case .notRegistered: return .notRegistered
+        case .notFound: return .notFound
+        @unknown default: return .unknown
         }
     }
 

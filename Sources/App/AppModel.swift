@@ -50,10 +50,12 @@ import ServiceManagement
     @ObservationIgnored var autoObservers: [NSObjectProtocol] = []
     var autoIsOperating = false
     var autoStatus = "自动挂载已关闭。"
-    var loginEnabled = false
-    var loginStatus = "尚未查询"
+    var loginState = LoginLaunchState.pending
+    var loginEnabled: Bool { loginState.isEnabled }
+    var loginStatus: String { loginState.title }
+    @ObservationIgnored var loginRegistrationRequired = false
     var autoEnvironment = AutoMountEnvironment(isClear: false, reason: "尚未核对驱动竞争状态。")
-    var sessionUnlocked = false
+    var autoSession = AutoMountSessionState()
     var autoEnabled = false {
         didSet {
             autoEnvironmentQueryID &+= 1
