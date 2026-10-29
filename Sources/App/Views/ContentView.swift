@@ -47,7 +47,11 @@ struct ContentView: View {
                         open: { Task { await model.openInFinder(volume) } },
                         eject: { ejectTarget = volume },
                         mount: { readOnly in Task { await model.mount(volume, readOnly: readOnly) } },
-                        unmount: { Task { await model.unmount(volume) } })
+                        unmount: { Task { await model.unmount(volume) } },
+                        autoMode: model.autoMode(for: volume),
+                        canRememberAutoWrite: model.canRememberAutoWrite(volume),
+                        autoStatus: model.autoStatus,
+                        setAutoMode: { model.setAutoMode($0, volume: volume) })
                 } else {
                     ContentUnavailableView {
                         Label(model.showOtherVolumes ? "尚未发现可显示的卷" : "尚未发现 NTFS 磁盘", systemImage: "externaldrive.badge.questionmark")

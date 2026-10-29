@@ -29,7 +29,7 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
 
     private var handle: OpaquePointer?
     private var backend: NTFSBackend?
-    private var mountBackend: (([String], Bool) throws -> NTFSBackend?)?
+    private var mountBackend: (([String], Bool, UnsafeMutableRawPointer) throws -> NTFSBackend?)?
     private let onContainerStatusChange: (FSContainerStatus) -> Void
     private var tornDown = false
     private var readOnly: Bool
@@ -49,7 +49,7 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
     /// `backend` comes from `nfsk_backend_from_block` / `nfsk_backend_from_file`.
     /// Ownership of `backend` transfers to this volume (freed in `teardown`).
     init(backend: NTFSBackend,
-         mountBackend: @escaping ([String], Bool) throws -> NTFSBackend?,
+         mountBackend: @escaping ([String], Bool, UnsafeMutableRawPointer) throws -> NTFSBackend?,
          onContainerStatusChange: @escaping (FSContainerStatus) -> Void,
          legacyOpenUnlink: Bool = ntfs3gVolume.needsLegacyOpenUnlink) throws {
         var err: Int32 = 0
@@ -265,21 +265,29 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
             guard !tornDown, handle != nil, activated else { throw posixError(ENXIO) }
             guard !mounted else { throw posixError(EBUSY) }
             do {
-                // 工厂先核验原 FSResource 的介质身份，再创建允许写入的后端。
-                if let replacement = try mountBackend?(activationOptions, readOnly) {
-                    if let h = handle { _ = nfsk_umount(h); handle = nil }
-                    if let b = backend { nfsk_backend_free(b.backend); b.cleanup() }
-                    backend = replacement
-                    var err: Int32 = 0
-                    guard let h = nfsk_mount(replacement.backend, !replacement.writable, &err) else {
-                        throw posixError(err)
-                    }
-                    handle = h
-                    var st = nfsk_statfs_t()
-                    let rc = nfsk_statfs(h, &st)
-                    guard rc == 0 else { throw posixError(-rc) }
-                    readOnly = st.read_only != 0
+                // 先关闭只读引擎；预检与重开在同一资源上串行，不保留并行引擎。
+                guard let previous = backend else { throw posixError(ENXIO) }
+                if let h = handle {
+                    let rc = nfsk_umount(h)
+                    handle = nil
+                    if rc != 0 { throw posixError(-rc) }
                 }
+                let replacement = try mountBackend?(activationOptions, readOnly, previous.backend)
+                let engineReadOnly = replacement.map { !$0.writable } ?? readOnly
+                if let replacement {
+                    nfsk_backend_free(previous.backend); previous.cleanup()
+                    backend = replacement
+                }
+                guard let selected = backend else { throw posixError(ENXIO) }
+                var err: Int32 = 0
+                guard let h = nfsk_mount(selected.backend, engineReadOnly, &err) else {
+                    throw posixError(err)
+                }
+                handle = h
+                var st = nfsk_statfs_t()
+                let rc = nfsk_statfs(h, &st)
+                guard rc == 0 else { throw posixError(-rc) }
+                readOnly = st.read_only != 0
                 if #unavailable(macOS 26.4), readOnly && backend?.writable == true {
                     throw posixError(EROFS)
                 }

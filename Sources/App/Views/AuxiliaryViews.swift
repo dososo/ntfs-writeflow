@@ -39,9 +39,17 @@ struct WorkbenchSettingsView: View {
                 Toggle("在菜单栏显示", isOn: $showMenuBar)
                 Toggle("显示其他文件系统", isOn: $model.showOtherVolumes)
             }
+            Section("插盘自动挂载") {
+                Toggle("自动管理已选定的 NTFS 盘", isOn: $model.autoEnabled)
+                Text("首次在磁盘详情选择自动只读或读写；之后新插入时自动处理。登录或解锁后先打开一次应用确认会话；之后关闭窗口继续工作，退出应用后停止。遇到其他驱动或身份不明会暂停。")
+                    .font(.caption).foregroundStyle(.secondary)
+                Text(model.autoStatus).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                Toggle("登录时启动", isOn: Binding(get: { model.loginEnabled }, set: { model.setLoginEnabled($0) }))
+                LabeledContent("登录项状态", value: model.loginStatus)
+            }
             Section("刷新") {
                 Toggle("自动刷新磁盘状态", isOn: $model.automaticRefresh)
-                Text("主窗口打开时，每 20 秒读取一次系统卷状态。关闭后仍可手动刷新。")
+                Text("磁盘插入、移除或状态变化后更新列表；不在无盘闲置时定时枚举。关闭后仍可手动刷新。")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("物理磁盘挂载") {
@@ -64,8 +72,8 @@ struct WorkbenchSettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 520, height: 470)
-        .onAppear { model.refreshMountHelperStatus() }
+        .frame(width: 560, height: 660)
+        .onAppear { model.refreshMountHelperStatus(); model.refreshLoginStatus() }
     }
 }
 

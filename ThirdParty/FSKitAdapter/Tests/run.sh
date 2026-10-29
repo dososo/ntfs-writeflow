@@ -34,7 +34,12 @@ RUN_DIR="$(mktemp -d "$OUT/卷测试.XXXXXX")"
 IMAGE="$RUN_DIR/测试卷.img"
 python3 -c 'import sys; f=open(sys.argv[1],"xb"); f.truncate(64*1024*1024); f.close()' "$IMAGE"
 build/engine/arm64/ntfsprogs/mkntfs -F -Q -L AdapterTest "$IMAGE" > "$RUN_DIR/格式化日志.txt" 2>&1
-xcrun clang -arch arm64 -mmacosx-version-min=26.0 -DHAVE_CONFIG_H=1 -Dnfsk_sync=nfsk_sync_real -Dnfsk_umount=nfsk_umount_real \
+xcrun clang -arch arm64 -fsanitize=address,undefined -g -DHAVE_CONFIG_H=1 \
+  -I build/engine/arm64 -I ThirdParty/ntfs-3g/include -I ThirdParty/NTFSBridge \
+  "$BASE/Tests/preflight_safety.c" build/engine/arm64/libntfs-3g/.libs/libntfs-3g.a \
+  -framework CoreFoundation -o "$OUT/preflight_safety"
+"$OUT/preflight_safety" "$IMAGE"
+xcrun clang -arch arm64 -mmacosx-version-min=26.0 -DHAVE_CONFIG_H=1 -Dnfsk_sync=nfsk_sync_real -Dnfsk_umount=nfsk_umount_real -Dnfsk_quick_check=nfsk_quick_check_real \
   -I build/engine/arm64 -I ThirdParty/ntfs-3g/include -I ThirdParty/NTFSBridge \
   -c ThirdParty/NTFSBridge/ntfs_fskit.c -o "$OUT/lifecycle_bridge.o"
 xcrun clang -arch arm64 -mmacosx-version-min=26.0 -I ThirdParty/NTFSBridge \

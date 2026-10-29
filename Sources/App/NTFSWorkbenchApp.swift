@@ -3,20 +3,19 @@ import AppKit
 
 @main struct NTFSWorkbenchApp: App {
     @NSApplicationDelegateAdaptor(WorkbenchDelegate.self) private var delegate
-    @State private var model = AppModel()
+    @State private var model: AppModel
+
+    init() {
+        let initial = AppModel()
+        _model = State(initialValue: initial)
+        delegate.model = initial
+    }
     @AppStorage("showMenuBar") private var showMenuBar = true
 
     var body: some Scene {
         WindowGroup("NTFS 畅写 · NTFS WriteFlow", id: "main") {
             ContentView(model: model)
                 .frame(minWidth: 840, minHeight: 560)
-                .task {
-                    await model.refresh()
-                    while !Task.isCancelled {
-                        try? await Task.sleep(for: .seconds(20))
-                        if !Task.isCancelled && model.automaticRefresh { await model.refresh() }
-                    }
-                }
         }
         .defaultSize(width: 1040, height: 680)
         .commands {
@@ -40,9 +39,25 @@ import AppKit
     }
 }
 
-final class WorkbenchDelegate: NSObject, NSApplicationDelegate {
+@MainActor final class WorkbenchDelegate: NSObject, NSApplicationDelegate {
+    weak var model: AppModel?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
+        let loginLaunch = LoginLaunchService.wasLaunchedAtLogin
+        Task { await model?.startMonitoring(launchedAtLogin: loginLaunch) }
+        if loginLaunch {
+            NSApp.setActivationPolicy(.accessory)
+            for window in NSApp.windows { window.orderOut(nil) }
+        } else {
+            NSApp.setActivationPolicy(.regular)
+            NSApp.activate(ignoringOtherApps: true)
+        }
     }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        NSApp.setActivationPolicy(.regular)
+        return true
+    }
+
+    func applicationWillTerminate(_ notification: Notification) { model?.stopMonitoring() }
 }

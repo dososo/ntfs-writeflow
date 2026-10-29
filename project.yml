@@ -12,8 +12,8 @@ settings:
     CODE_SIGN_STYLE: Manual
     CODE_SIGNING_ALLOWED: NO
     ENABLE_HARDENED_RUNTIME: YES
-    CURRENT_PROJECT_VERSION: 3
-    MARKETING_VERSION: 0.1.2
+    CURRENT_PROJECT_VERSION: 4
+    MARKETING_VERSION: 0.2.0
 targets:
   NTFSWorkbench:
     type: application
@@ -129,10 +129,10 @@ targets:
           - '$(SRCROOT)/ThirdParty/NTFSBridge'
           - '$(SRCROOT)/ThirdParty/ntfs-3g'
           - '$(SRCROOT)/ThirdParty/ntfs-3g/include'
-          - '$(SRCROOT)/build/engine/arm64'
+          - '$(SRCROOT)/build/engine/$(CURRENT_ARCH)'
         OTHER_LDFLAGS:
           - '$(inherited)'
-          - '"$(SRCROOT)/build/engine/arm64/libntfs-3g/.libs/libntfs-3g.a"'
+          - '"$(SRCROOT)/build/engine/$(CURRENT_ARCH)/libntfs-3g/.libs/libntfs-3g.a"'
     dependencies:
       - sdk: FSKit.framework
       - sdk: DiskArbitration.framework

@@ -8,6 +8,10 @@ struct VolumeDetailView: View {
     let eject: () -> Void
     let mount: (Bool) -> Void
     let unmount: () -> Void
+    let autoMode: AutoMountMode
+    let canRememberAutoWrite: Bool
+    let autoStatus: String
+    let setAutoMode: (AutoMountMode) -> Void
 
     private var stateColor: Color {
         switch volume.access {
@@ -64,6 +68,24 @@ struct VolumeDetailView: View {
                 if !volume.canOfferEject && !volume.isProtectedForEject {
                     Label(volume.isNTFS ? "未确认整盘可弹出或介质身份，请刷新后重试。" : "其他文件系统仅供查看；本应用支持从 NTFS 卷安全弹出其所在整盘。", systemImage: "info.circle")
                         .font(.callout).foregroundStyle(.secondary)
+                }
+                if volume.isNTFS && volume.isInternal == false {
+                    GroupBox("下次插入此盘") {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Picker("自动挂载", selection: Binding(get: { autoMode }, set: setAutoMode)) {
+                                ForEach(AutoMountMode.allCases, id: \.self) { mode in
+                                    Text(mode.title).tag(mode)
+                                }
+                            }.disabled(busy || !current || !canRememberAutoWrite)
+                            if !canRememberAutoWrite {
+                                Text("缺少完整稳定设备标识，当前无法启用自动管理；仍可手动挂载。")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            Text("此选择不立即切换当前挂载。自动管理还需在设置中开启；现有挂载与第三方驱动不会被自动卸载。")
+                                .font(.caption).foregroundStyle(.secondary)
+                            Text(autoStatus).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                        }.padding(8)
+                    }
                 }
                 GroupBox {
                     VStack(alignment: .leading, spacing: 16) {

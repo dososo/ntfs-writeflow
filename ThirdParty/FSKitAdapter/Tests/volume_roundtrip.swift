@@ -19,7 +19,7 @@ struct VolumeRoundtrip {
         let image = CommandLine.arguments[1]
         let expectedPath = CommandLine.arguments[2]
         let volume = try ntfs3gVolume(backend: backend(image, writable: false),
-            mountBackend: { _, _ in try backend(image, writable: true) }, onContainerStatusChange: { _ in })
+            mountBackend: { _, _, _ in try backend(image, writable: true) }, onContainerStatusChange: { _ in })
         let root = try volume.activate(taskOptions: ["-o", "rw"])
         try volume.mountVolume()
         let originalName = FSFileName(string: "中文读写.txt")
@@ -57,7 +57,7 @@ struct VolumeRoundtrip {
 
         let before = try Data(contentsOf: URL(fileURLWithPath: image))
         let readOnly = try ntfs3gVolume(backend: backend(image, writable: false),
-            mountBackend: { _, _ in nil }, onContainerStatusChange: { _ in })
+            mountBackend: { _, _, _ in nil }, onContainerStatusChange: { _ in })
         try readOnly.quickCheck()
         _ = try readOnly.activate(taskOptions: ["-o", "rdonly"])
         try readOnly.mountVolume()

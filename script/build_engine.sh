@@ -5,7 +5,17 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SOURCE="$ROOT/ThirdParty/ntfs-3g"
 PIN="7f0f841fc52cf719106c5c93bafe465004e36816"
 WORK="$ROOT/build/engine"
-BUILD="$WORK/arm64"
+BUILD_ARCH="${NTFS_BUILD_ARCH:-arm64}"
+case "$BUILD_ARCH" in
+  arm64|x86_64) ;;
+  *) printf 'NTFS_BUILD_ARCH 仅支持 arm64 或 x86_64。\n' >&2; exit 2 ;;
+esac
+BUILD="$WORK/$BUILD_ARCH"
+CONFIGURE_ARCH=()
+HOST_ARCH="$(uname -m)"
+if [[ "$BUILD_ARCH" != "$HOST_ARCH" ]]; then
+  CONFIGURE_ARCH=("--host=$BUILD_ARCH-apple-darwin" "--build=$HOST_ARCH-apple-darwin")
+fi
 if [[ "$(git -C "$SOURCE" rev-parse --is-inside-work-tree 2>/dev/null || true)" != true ]]; then
   printf '缺少固定版本源码：%s\n' "$SOURCE" >&2
   exit 1
@@ -21,8 +31,8 @@ if [[ ! -f "$WORK/source/configure" ]]; then
 fi
 SDK="$(xcrun --sdk macosx --show-sdk-path)"
 if [[ ! -f "$BUILD/Makefile" ]]; then
-  (cd "$BUILD"; CC=clang CFLAGS="-arch arm64 -isysroot $SDK -mmacosx-version-min=15.4 -O2" \
-    ../source/configure --disable-shared --enable-static --disable-ntfs-3g \
+  (cd "$BUILD"; CC=clang CFLAGS="-arch $BUILD_ARCH -isysroot $SDK -mmacosx-version-min=15.4 -O2" \
+    ../source/configure ${CONFIGURE_ARCH[@]+"${CONFIGURE_ARCH[@]}"} --disable-shared --enable-static --disable-ntfs-3g \
     --enable-ntfsprogs --disable-crypto --disable-nls)
 fi
 make -C "$BUILD/libntfs-3g" -j4
