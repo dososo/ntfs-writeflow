@@ -11,8 +11,8 @@ struct DiagnosticsView: View {
             }
             Section("当前验证范围") {
                 Label("磁盘列表来自本机系统", systemImage: "externaldrive")
-                Label("系统托管测试镜像的读写闭环已通过", systemImage: "checkmark.circle")
-                Text("支持正常卸载与安全弹出整盘，遇到占用时停止。Windows 与异常断电等场景分别验收；格式化和完整修复尚未提供。")
+                Label("预览版：验证结果仅适用于报告中的版本与设备", systemImage: "info.circle")
+                Text("当前使用 FSKit 与 NTFS-3G，支持 Apple Silicon、macOS 26 及以上。Windows 独立读写、异常断电、Intel 和旧系统尚未完成验收；重要数据请先备份。格式化和完整修复尚未提供。")
                     .foregroundStyle(.secondary)
             }
             Section("本地诊断") {

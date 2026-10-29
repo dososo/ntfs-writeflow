@@ -8,3 +8,12 @@ void nfsk_test_fail_sync(int enabled) { fail_sync = enabled; }
 int nfsk_sync(ntfs_fskit_volume *volume) {
     return fail_sync ? -EIO : nfsk_sync_real(volume);
 }
+
+static int fail_close;
+int nfsk_umount_real(ntfs_fskit_volume *volume);
+void nfsk_test_fail_close(int enabled) { fail_close = enabled; }
+/* 真实关闭后注入桥接边界错误，保持句柄始终消费的正式契约。 */
+int nfsk_umount(ntfs_fskit_volume *volume) {
+    int rc = nfsk_umount_real(volume);
+    return rc ? rc : (fail_close ? -EIO : 0);
+}

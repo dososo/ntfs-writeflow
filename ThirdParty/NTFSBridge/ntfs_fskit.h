@@ -74,7 +74,8 @@ typedef int (*nfsk_dir_cb)(void *ctx, const char *name_utf8,
 /* --- lifecycle --- */
 ntfs_fskit_volume *nfsk_mount(void *resource, bool read_only, int *out_errno);
 int  nfsk_probe(void *resource, char *name_out, size_t name_cap, uint64_t *serial_out);
-void nfsk_umount(ntfs_fskit_volume *v);
+/* Always consumes v, including on error. Returns zero or negative errno. */
+int nfsk_umount(ntfs_fskit_volume *v);
 int  nfsk_sync(ntfs_fskit_volume *v);
 int  nfsk_statfs(ntfs_fskit_volume *v, nfsk_statfs_t *out);
 

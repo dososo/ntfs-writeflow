@@ -30,7 +30,22 @@ private final class EjectReply: @unchecked Sendable {
 // 放在非主线程隔离的函数中创建 XPC 回调，避免错误回调继承 @main 的隔离。
 private func requestEject(_ request: PrivilegedEjectRequest, mountRoot: String? = nil) async throws -> String? {
     var handles: [FileHandle] = []
-    if let mountRoot {
+    var otherMountRoot = mountRoot
+    if let mountRoot, let mounted = MountedFileSystemReader.read(path: mountRoot), mounted.type == "blntfs" {
+        let service = DiskService()
+        guard let record = try await service.record(request.deviceID),
+              record.mediaRegistryID == request.mediaRegistryID,
+              record.wholeMediaRegistryID == request.wholeMediaRegistryID,
+              record.mediaByteCount == request.mediaByteCount,
+              record.mountPoint == mountRoot, record.mountedFileSystem == mounted,
+              !record.isProtectedForEject else {
+            throw IntegrationFailure(message: "本次自有挂载的来源或介质身份不符")
+        }
+        do { try await service.unmount(record) }
+        catch { return error.localizedDescription }
+        otherMountRoot = nil
+    }
+    if let mountRoot = otherMountRoot {
         let fd = open(mountRoot, O_EVTONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
         guard fd >= 0 else { throw IntegrationFailure(message: "无法打开本次镜像挂载根目录") }
         let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
@@ -197,13 +212,27 @@ private final class ImageIdentity {
             try require(hash(first.0) == originalHash, "错误身份请求后镜像摘要改变")
             checks.append("错误介质身份请求明确拒绝，原对象与映射保留，镜像摘要不变")
 
-            _ = try command("/usr/sbin/diskutil", ["mount", first.1.device])
-            let mountedInfo = try plist(command("/usr/sbin/diskutil", ["info", "-plist", first.1.device]))
-            guard let path = mountedInfo["MountPoint"] as? String, path.hasPrefix("/Volumes/"),
-                  let mounted = MountedFileSystemReader.read(path: path),
-                  mounted.source == "/dev/" + first.1.device, mounted.type != "blntfs", !mounted.isReadOnly else {
-                throw IntegrationFailure(message: "系统/其他驱动未正常读写挂载新镜像，无法进行占用测试")
+            let mountBase = "/private/tmp/ntfs-writeflow-\(geteuid())"
+            if mkdir(mountBase, 0o700) != 0 && errno != EEXIST {
+                throw IntegrationFailure(message: "无法创建专用挂载根目录")
             }
+            var baseInfo = stat()
+            try require(lstat(mountBase, &baseInfo) == 0 && baseInfo.st_mode & S_IFMT == S_IFDIR
+                && baseInfo.st_uid == geteuid() && baseInfo.st_mode & 0o777 == 0o700,
+                "专用挂载根目录身份或权限不符")
+            let path = mountBase + "/" + UUID().uuidString
+            try require(mkdir(path, 0o700) == 0, "无法创建本次唯一挂载目录")
+            try require(first.1.isPresent && mapping(first.0, device: first.1.device), "挂载前镜像映射变化")
+            _ = try command("/sbin/mount", ["-F", "-t", "blntfs", "-o",
+                "rw,nosuid,nodev,nobrowse,writeflow-media-id=\(expected.mediaRegistryID)",
+                "/dev/" + first.1.device, path])
+            guard let mounted = MountedFileSystemReader.read(path: path), mounted.mountPoint == path,
+                  mounted.source == "/dev/" + first.1.device, mounted.type == "blntfs",
+                  mounted.ownerID == geteuid(), !mounted.isReadOnly else {
+                throw IntegrationFailure(message: "本次镜像未由blntfs在自有目录按当前用户读写挂载")
+            }
+            events.append(["步骤": "自有引擎挂载回读", "挂载根": path, "来源": mounted.source,
+                           "类型": mounted.type, "所有者": mounted.ownerID])
             try require(first.1.isPresent && mapping(first.0, device: first.1.device), "挂载后新镜像身份不符")
             let file = URL(fileURLWithPath: path).appendingPathComponent("仅本次弹出占用验收.bin")
             try Data(repeating: 0x5a, count: 4096).write(to: file, options: .withoutOverwriting)

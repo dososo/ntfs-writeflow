@@ -140,8 +140,25 @@ struct ActivationLifecycle {
         catch { precondition((error as NSError).code == Int(ENXIO)) }
         failedSync.teardown()
         precondition(failedSyncCounter.cleanups == 1, "失败卷重复清理")
+        let failedCloseCounter = Counter()
+        var failedCloseStatus: FSContainerStatus?
+        let failedClose = try ntfs3gVolume(backend: backend(image, counter: failedCloseCounter),
+            mountBackend: { _, _ in nil }, onContainerStatusChange: { failedCloseStatus = $0 })
+        _ = try failedClose.activate(taskOptions: [])
+        try failedClose.mountVolume()
+        try await failedClose.synchronize(flags: .wait)
+        nfsk_test_fail_close(1)
+        await failedClose.unmount()
+        nfsk_test_fail_close(0)
+        precondition(failedCloseStatus?.state == .notReady && failedCloseCounter.cleanups == 1,
+            "预同步成功后关闭失败仍重新打开卷")
+        precondition((failedCloseStatus?.status as NSError?)?.code == Int(EIO), "关闭错误码丢失")
+        expect(ENXIO) { _ = try failedClose.activate(taskOptions: []) }
+        try await failedClose.deactivate()
+        failedClose.teardown()
+        precondition(failedCloseCounter.cleanups == 1, "关闭失败重复释放后端")
         print("生命周期通过：激活只读根项、mount身份拒绝且镜像不变、重开失败清理、重复激活和挂载保护、析构释放、读写→只读→读写重挂载、同一根项与既有文件有效。")
-        print("卸载同步故障注入通过：保留notReady、拒绝后续激活和同步、不重复清理；关闭内部void同步错误仍是既有接口边界。")
+        print("卸载同步故障注入通过：保留notReady、拒绝后续激活和同步、不重复清理；关闭错误注入也保留notReady并阻止重开；均为适配层边界注入。")
         print("此测试未调用系统挂载；mount失败后的守护进程unload及直接detach需要系统验证。")
     }
 }

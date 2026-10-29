@@ -605,19 +605,24 @@ done:
     return -error;
 }
 
-void nfsk_umount(ntfs_fskit_volume *v) {
-    if (!v) return;
+int nfsk_umount(ntfs_fskit_volume *v) {
+    if (!v) return 0;
+    int error = 0;
     while (v->devctx && v->devctx->open_items) {
         nfsk_open_ref *entry = v->devctx->open_items;
         uint64_t ino = from_mft(MREF(entry->ref));
-        if (nfsk_close_item(v, ino)) {
+        int rc = nfsk_close_item(v, ino);
+        if (rc) {
+            if (!error) error = -rc;
             ntfs_log_error("xntfs: retaining an open-file recovery link after failed cleanup\n");
             v->devctx->open_items = entry->next;
             free(entry->anchor);
             free(entry);
         }
     }
-    if (v->vol && nfsk_sync(v)) ntfs_log_error("xntfs: unmount after a writeback error\n");
+    int rc = v->vol ? nfsk_sync(v) : 0;
+    if (rc && !error) error = -rc;
+    if (rc) ntfs_log_error("xntfs: unmount after a writeback error\n");
     // A forced teardown cannot keep retrying an unavailable device. Report the
     // failure, then discard only the in-memory copies after the failed sync.
     while (v->devctx && v->devctx->inodes) {
@@ -635,9 +640,10 @@ void nfsk_umount(ntfs_fskit_volume *v) {
         v->devctx->inodes = entry->next;
         free(entry);
     }
-    if (v->vol) ntfs_umount(v->vol, TRUE);
+    if (v->vol && ntfs_umount(v->vol, TRUE) && !error) error = errno ? errno : EIO;
     free(v->devctx);
     free(v);
+    return -error;
 }
 
 int nfsk_sync(ntfs_fskit_volume *v) {

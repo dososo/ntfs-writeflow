@@ -61,7 +61,7 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
         var st = nfsk_statfs_t()
         let statResult = nfsk_statfs(h, &st)
         guard statResult == 0 else {
-            nfsk_umount(h)
+            _ = nfsk_umount(h)
             nfsk_backend_free(backend.backend)
             backend.cleanup()
             throw posixError(-statResult)
@@ -99,7 +99,7 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
         activated = false
         mounted = false
         activationOptions = []
-        if let h = handle { nfsk_umount(h); handle = nil }
+        if let h = handle { _ = nfsk_umount(h); handle = nil }
         if let b = backend { nfsk_backend_free(b.backend); b.cleanup(); backend = nil }
         mountBackend = nil
         items.removeAll()
@@ -267,7 +267,7 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
             do {
                 // 工厂先核验原 FSResource 的介质身份，再创建允许写入的后端。
                 if let replacement = try mountBackend?(activationOptions, readOnly) {
-                    if let h = handle { nfsk_umount(h); handle = nil }
+                    if let h = handle { _ = nfsk_umount(h); handle = nil }
                     if let b = backend { nfsk_backend_free(b.backend); b.cleanup() }
                     backend = replacement
                     var err: Int32 = 0
@@ -304,8 +304,13 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
             }
             // unmount 允许清理 I/O；deactivate 不应再访问介质。
             // 同一后端重开只读引擎，根项只含 MFT 编号，不持有失效的 C 句柄。
-            nfsk_umount(h)
+            let closeResult = nfsk_umount(h)
             handle = nil
+            if closeResult != 0 {
+                failure = posixError(-closeResult)
+                teardownLocked()
+                return
+            }
             mounted = false
             readOnly = true
             var err: Int32 = 0
