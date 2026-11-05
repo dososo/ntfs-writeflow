@@ -12,17 +12,17 @@
 [![macOS](https://img.shields.io/badge/macOS-26%2B-23334B.svg)](#安装)
 [![架构](https://img.shields.io/badge/架构-Apple%20Silicon-168B86.svg)](#安装)
 [![状态](https://img.shields.io/badge/状态-开发候选-B66C24.svg)](#验证状态与边界)
-[![版本](https://img.shields.io/badge/版本-0.1.2--预览版-23334B.svg)](https://github.com/dososo/ntfs-writeflow/releases/tag/v0.1.2)
+[![版本](https://img.shields.io/badge/版本-0.2.0--预览版-23334B.svg)](https://github.com/dososo/ntfs-writeflow/releases/tag/v0.2.0)
 [![技术](https://img.shields.io/badge/SwiftUI%20%2B%20FSKit%20%2B%20NTFS--3G-23334B.svg)](#技术栈与架构)
 
 <p>
-  <a href="https://github.com/dososo/ntfs-writeflow/releases/download/v0.1.2/NTFS-WriteFlow-0.1.2-arm64.dmg"><strong>⬇ 下载 Mac 应用（DMG）</strong></a>
+  <a href="https://github.com/dososo/ntfs-writeflow/releases/download/v0.2.0/NTFS-WriteFlow-0.2.0-arm64.dmg"><strong>⬇ 下载 Mac 应用（DMG）</strong></a>
   &nbsp;·&nbsp;
-  <a href="https://github.com/dososo/ntfs-writeflow/releases/download/v0.1.2/NTFS-WriteFlow-0.1.2-arm64.zip">ZIP 下载</a>
+  <a href="https://github.com/dososo/ntfs-writeflow/releases/download/v0.2.0/NTFS-WriteFlow-0.2.0-arm64.zip">ZIP 下载</a>
   &nbsp;·&nbsp;
-  <a href="https://github.com/dososo/ntfs-writeflow/releases/tag/v0.1.2">全部 Release 附件</a>
+  <a href="https://github.com/dososo/ntfs-writeflow/releases/tag/v0.2.0">全部 Release 附件</a>
 </p>
-<p><sub>0.1.2 预览版 · Apple Silicon · macOS 26 及以上</sub></p>
+<p><sub>0.2.0 预览版 · Apple Silicon · macOS 26 及以上</sub></p>
 
 </div>
 
@@ -77,15 +77,15 @@ NTFS 畅写是一款 **macOS 原生 NTFS 桌面应用**。SwiftUI 提供磁盘�
   <br><sub><b>权限与偏好放在一起</b> — 菜单栏、自动刷新与管理员服务授权状态均可查看。</sub>
 </div>
 
-截图来自当前应用与专用的 `WriteFlow Demo` 测试镜像。图片中的临时设备编号、挂载路径不适用于其他机器；不是可复制的操作命令。
+截图来自此前已验收版本与专用的 `WriteFlow Demo` 测试镜像。图片中的临时设备编号、挂载路径不适用于其他机器；不是可复制的操作命令。
 
-0.1.2 修复关闭阶段错误回传并完善诊断提示；[查看本版验收与限制](发布/0.1.2验收记录.md)。
+0.2.0 新增逐盘自动挂载、登录启动、会话保护与写前预检，并提供 Issue #3 的挂载会话候选修正。自动管理默认关闭；macOS 27.2 实体盘问题仍待复测。[查看本版预览范围与限制](发布/0.2.0预览发行说明.md)。
 
 ## 安装
 
 > **目标环境**：macOS 26 及以上 · Apple Silicon。当前实测为 macOS 26.6.2；Intel、旧系统和所有 macOS 26 小版本未完成兼容性验证。
 
-从 [0.1.2 预览版 Release](https://github.com/dososo/ntfs-writeflow/releases/tag/v0.1.2) 下载 [DMG 安装包](https://github.com/dososo/ntfs-writeflow/releases/download/v0.1.2/NTFS-WriteFlow-0.1.2-arm64.dmg) 或 [应用 ZIP](https://github.com/dososo/ntfs-writeflow/releases/download/v0.1.2/NTFS-WriteFlow-0.1.2-arm64.zip)。同一页面提供完整对应源码、`SHA256SUMS.txt` 和分发验证记录。此版本保持开发预览定位。
+从 [0.2.0 预览版 Release](https://github.com/dososo/ntfs-writeflow/releases/tag/v0.2.0) 下载 [DMG 安装包](https://github.com/dososo/ntfs-writeflow/releases/download/v0.2.0/NTFS-WriteFlow-0.2.0-arm64.dmg) 或 [应用 ZIP](https://github.com/dososo/ntfs-writeflow/releases/download/v0.2.0/NTFS-WriteFlow-0.2.0-arm64.zip)。同一页面提供完整对应源码、`SHA256SUMS.txt` 和分发验证记录。此版本保持开发预览定位。
 
 安装步骤：
 
@@ -101,7 +101,7 @@ NTFS 畅写是一款 **macOS 原生 NTFS 桌面应用**。SwiftUI 提供磁盘�
 
 ## 验证状态与边界
 
-已经执行的验证包括：
+以下表格含历史版本的分项证据；0.2.0本轮回归与未验范围以[预览发行说明](发布/0.2.0预览发行说明.md)和Release验证附件为准：
 
 | 范围 | 已验证行为 |
 | --- | --- |
@@ -112,7 +112,7 @@ NTFS 畅写是一款 **macOS 原生 NTFS 桌面应用**。SwiftUI 提供磁盘�
 
 本版本应用已完成 Developer ID 签名、Apple 公证、票据装订和本机 Gatekeeper 核验；DMG 与 ZIP 的内嵌应用对应同一已验收构建。产品源码与构建资源冻结后完成离线重建；公开下载说明随本次发布更新。具体产物身份和验证范围见 Release 附件 `分发验证摘要.json`、`构建对应记录.json` 与 `SHA256SUMS.txt`，公证不代表全部兼容性已经验证。
 
-**尚未完成**：Windows 读取与写回、Windows 文件系统检查、真实掉电与异常拔插、睡眠唤醒、长期压力、真实多用户隔离、全新 Mac 安装与完整卸载。格式化、完整校验修复、开机启动、每卷偏好及通知等原定能力尚未全部交付。测试过专用目录不代表核验过整盘原有数据。
+**尚未完成**：Windows 读取与写回、Windows 文件系统检查、真实掉电与异常拔插、睡眠唤醒、长期压力、真实多用户隔离、全新 Mac 安装与完整卸载。格式化、完整校验修复及通知等原定能力尚未全部交付；登录启动与每卷偏好已实现，真实登录和跨账户仍待验收。测试过专用目录不代表核验过整盘原有数据。
 
 详细范围、保留的错误观察和待办见[已知问题与发布门禁](发布/已知问题与发布门禁.md)。
 
