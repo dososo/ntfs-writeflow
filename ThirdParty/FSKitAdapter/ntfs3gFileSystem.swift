@@ -54,6 +54,16 @@ final class ntfs3gFileSystem: FSUnaryFileSystem, FSUnaryFileSystemOperations,
         requestsReadOnly(options) || !requestsReadWrite(options)
     }
 
+    static func resolvedMountReadOnly(_ options: [String], resourceWritable: Bool, blockResource: Bool = true) throws -> Bool {
+        let readOnly = defaultsToReadOnly(options)
+        if !readOnly {
+            // block写入须明确绑定原IOMedia；PathURL继续使用系统授权的原URL/FD，不伪造登记标识。
+            if blockResource, try expectedMediaID(options) == nil { throw posixError(ESTALE) }
+            guard resourceWritable else { throw posixError(EROFS) }
+        }
+        return readOnly
+    }
+
     /// `-r`, `--rdonly`, `--read-only`, bare `ro`/`rdonly`, or `-o <list>` containing them.
     private static func requestsReadOnly(_ taskOptions: [String]) -> Bool {
         matchOptions(taskOptions, tokens: ["ro", "rdonly"], flags: ["-r", "--rdonly", "--read-only", "rdonly", "ro"])
@@ -71,6 +81,7 @@ final class ntfs3gFileSystem: FSUnaryFileSystem, FSUnaryFileSystemOperations,
             var oArg: String? = nil
             if opt == "-o", i + 1 < taskOptions.count { oArg = taskOptions[i + 1]; i += 1 }
             else if opt.hasPrefix("-o"), opt.count > 2 { oArg = String(opt.dropFirst(2)) }
+            else if !opt.hasPrefix("-") { oArg = opt }
             if let oArg {
                 for tok in oArg.split(separator: ",") where tokens.contains(tok.trimmingCharacters(in: .whitespaces)) { return true }
             }
@@ -100,7 +111,13 @@ final class ntfs3gFileSystem: FSUnaryFileSystem, FSUnaryFileSystemOperations,
             ])
         }
         try validateIdentity()
-        return try makeWritable()
+        let selected = try makeWritable()
+        guard selected.writable else {
+            nfsk_backend_free(selected.backend)
+            selected.cleanup()
+            throw posixError(EROFS)
+        }
+        return selected
     }
 
     static func backendForMount(readOnly: Bool, source: UnsafeMutableRawPointer,
@@ -148,9 +165,12 @@ final class ntfs3gFileSystem: FSUnaryFileSystem, FSUnaryFileSystemOperations,
         do { try Self.validateIdentity(resource, options: options.taskOptions) }
         catch { replyHandler(nil, error); return }
         let defaultReadOnly = Self.defaultsToReadOnly(options.taskOptions)
+        let resourceWritable: Bool
+        if let block = resource as? FSBlockDeviceResource { resourceWritable = block.isWritable }
+        else if #available(macOS 26.0, *), let path = resource as? FSPathURLResource { resourceWritable = path.isWritable }
+        else { resourceWritable = false }
         var e: Int32 = 0
-        // Block-device mount options arrive at activate, not load. Inspect metadata
-        // read-only first, including when the user's default is read/write.
+        // 加载始终只读探测；权限由加载、激活和挂载阶段的显式选项共同决定。
         guard let made = Self.makeBackend(resource, allowWrite: false, out: &e) else {
             let error = posixError(e)
             containerStatus = .notReady(status: error)
@@ -162,11 +182,12 @@ final class ntfs3gFileSystem: FSUnaryFileSystem, FSUnaryFileSystemOperations,
             // ntfs3gVolume takes ownership of the backend; on failure its init frees
             // the backend and runs cleanup itself.
             let vol = try ntfs3gVolume(backend: made,
-                                       mountBackend: { activationOptions, currentReadOnly, readOnlyBackend in
-                                           let explicitOptions = options.taskOptions + activationOptions
+                                       mountBackend: { mountOptions, currentReadOnly, readOnlyBackend in
+                                           let explicitOptions = options.taskOptions + mountOptions
                                            try Self.validateIdentity(resource, options: explicitOptions)
-                                           let readOnly = Self.requestsReadOnly(explicitOptions) ? true
-                                               : Self.requestsReadWrite(explicitOptions) ? false : defaultReadOnly
+                                           let readOnly = try Self.resolvedMountReadOnly(explicitOptions, resourceWritable: resourceWritable,
+                                               blockResource: resource is FSBlockDeviceResource)
+                                           NSLog("[blntfs] 权限选择：选项数=\(explicitOptions.count) 只读=\(readOnly) 原只读=\(currentReadOnly) 资源可写=\(resourceWritable) 有介质标记=\((try? Self.expectedMediaID(explicitOptions)) != nil)")
                                            guard readOnly != currentReadOnly else { return nil }
                                            return try Self.backendForMount(readOnly: readOnly, source: readOnlyBackend,
                                                validateIdentity: { try Self.validateIdentity(resource, options: explicitOptions) },

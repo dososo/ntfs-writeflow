@@ -239,6 +239,7 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
 
     // 激活只提供真实可用的只读根项；挂载阶段才处理身份与写入权限。
     func activate(taskOptions: [String]) throws -> FSItem {
+        NSLog("[blntfs] 激活输入：选项数=\(taskOptions.count) 默认只读=\(ntfs3gFileSystem.defaultsToReadOnly(taskOptions)) 有介质标记=\((try? ntfs3gFileSystem.expectedMediaID(taskOptions)) != nil)")
         try withLock {
             guard !tornDown, handle != nil else { throw posixError(ENXIO) }
             guard !activated, !mounted, readOnly else { throw posixError(EBUSY) }
@@ -261,14 +262,16 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
     }
 
     func mount(options: FSTaskOptions) async throws {
-        try mountVolume()
+        try mountVolume(taskOptions: options.taskOptions)
     }
 
     // 与系统入口共用，离线测试无需伪造系统保留的 FSTaskOptions。
-    func mountVolume() throws {
+    func mountVolume(taskOptions: [String] = []) throws {
         try withLock {
             guard !tornDown, handle != nil, activated else { throw posixError(ENXIO) }
             guard !mounted else { throw posixError(EBUSY) }
+            let combinedOptions = activationOptions + taskOptions
+            NSLog("[blntfs] 挂载输入：激活选项数=\(activationOptions.count) 挂载选项数=\(taskOptions.count) 默认只读=\(ntfs3gFileSystem.defaultsToReadOnly(combinedOptions)) 有介质标记=\((try? ntfs3gFileSystem.expectedMediaID(combinedOptions)) != nil)")
             do {
                 // 先关闭只读引擎；预检与重开在同一资源上串行，不保留并行引擎。
                 guard let previous = backend else { throw posixError(ENXIO) }
@@ -277,7 +280,7 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
                     handle = nil
                     if rc != 0 { throw posixError(-rc) }
                 }
-                let replacement = try mountBackend?(activationOptions, readOnly, previous.backend)
+                let replacement = try mountBackend?(combinedOptions, readOnly, previous.backend)
                 let engineReadOnly = replacement.map { !$0.writable } ?? readOnly
                 if let replacement {
                     nfsk_backend_free(previous.backend); previous.cleanup()
@@ -297,7 +300,9 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
                     throw posixError(EROFS)
                 }
                 mounted = true
+                NSLog("[blntfs] 挂载完成：内部只读=\(readOnly) 后端可写=\(backend?.writable ?? false)")
             } catch {
+                NSLog("[blntfs] 挂载失败：错误码=\((error as NSError).code)")
                 teardownLocked()
                 onContainerStatusChange(.notReady(status: error))
                 throw error

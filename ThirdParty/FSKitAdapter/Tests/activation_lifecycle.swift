@@ -57,6 +57,21 @@ struct ActivationLifecycle {
         precondition(validCounter.factoryCalls == 1 && validCounter.cleanups == 2)
         precondition((try? Data(contentsOf: URL(fileURLWithPath: image))) == before)
 
+        let unavailableCounter = Counter()
+        let unavailableSource = try backend(image, counter: unavailableCounter)
+        expect(EROFS) {
+            let unexpected = try ntfs3gFileSystem.checkedWritableBackend(unavailableSource.backend,
+                validateIdentity: {}, makeWritable: {
+                    unavailableCounter.factoryCalls += 1
+                    return try backend(image, writable: false, counter: unavailableCounter)
+                })
+            nfsk_backend_free(unexpected.backend); unexpected.cleanup()
+        }
+        nfsk_backend_free(unavailableSource.backend); unavailableSource.cleanup()
+        precondition(unavailableCounter.factoryCalls == 1 && unavailableCounter.cleanups == 2,
+                     "显式RW不可写后端必须拒绝并只清理一次")
+        precondition((try? Data(contentsOf: URL(fileURLWithPath: image))) == before)
+
         // 只读请求即使预检失败也不能反转成可写；工厂只接收false。
         let readOnlyCounter = Counter()
         let readOnlySource = try backend(image, counter: readOnlyCounter)
@@ -235,6 +250,64 @@ struct ActivationLifecycle {
         try await failedClose.deactivate()
         failedClose.teardown()
         precondition(failedCloseCounter.cleanups == 1, "关闭失败重复释放后端")
+
+        let mountOnlyCounter = Counter()
+        let mountOnly = try ntfs3gVolume(backend: backend(image, counter: mountOnlyCounter),
+            mountBackend: { options, _, source in
+                precondition(options == ["rw,nosuid,writeflow-media-id=9"], "真实mount参数没有传入权限工厂")
+                let readOnly = try ntfs3gFileSystem.resolvedMountReadOnly(options, resourceWritable: true)
+                return try ntfs3gFileSystem.backendForMount(readOnly: readOnly, source: source,
+                    validateIdentity: { }, makeBackend: { writable in
+                        mountOnlyCounter.factoryCalls += 1
+                        return try backend(image, writable: writable, counter: mountOnlyCounter)
+                    })
+            }, onContainerStatusChange: { _ in })
+        let mountOnlyRoot = try mountOnly.activate(taskOptions: [])
+        do {
+            _ = try await mountOnly.createItem(named: FSFileName(string: "激活仍不可写"), type: .directory,
+                inDirectory: mountOnlyRoot, attributes: FSItem.SetAttributesRequest())
+            preconditionFailure("激活不能提前写入")
+        } catch { precondition((error as NSError).code == Int(EROFS)) }
+        try mountOnly.mountVolume(taskOptions: ["rw,nosuid,writeflow-media-id=9"])
+        let (directory, _) = try await mountOnly.createItem(named: FSFileName(string: "挂载参数中文目录"), type: .directory,
+            inDirectory: mountOnlyRoot, attributes: FSItem.SetAttributesRequest())
+        let (written, _) = try await mountOnly.createItem(named: FSFileName(string: "中文内容.txt"), type: .file,
+            inDirectory: directory, attributes: FSItem.SetAttributesRequest())
+        let mountOnlyBytes = Data("仅挂载阶段显式读写".utf8)
+        let actualCount = try await mountOnly.write(contents: mountOnlyBytes, to: written, at: 0)
+        precondition(actualCount == mountOnlyBytes.count && mountOnlyCounter.factoryCalls == 1)
+        try await mountOnly.synchronize(flags: .wait)
+        await mountOnly.unmount()
+        try await mountOnly.deactivate()
+        mountOnly.teardown()
+        precondition(mountOnlyCounter.cleanups == 2)
+        print("挂载阶段参数通过：激活空选项保持只读，mount唯一RW与介质标记触发预检及可写后端，中文目录与文件实际写入/同步/关闭。")
+        for (activation, mounting) in [(["ro,writeflow-media-id=9"], ["rw"]),
+                                        (["rw,writeflow-media-id=9"], ["ro"])] {
+            let priorityCounter = Counter()
+            let priorityBefore = try Data(contentsOf: URL(fileURLWithPath: image))
+            let priority = try ntfs3gVolume(backend: backend(image, counter: priorityCounter),
+                mountBackend: { options, currentReadOnly, source in
+                    let readOnly = try ntfs3gFileSystem.resolvedMountReadOnly(options, resourceWritable: true)
+                    guard readOnly != currentReadOnly else { return nil }
+                    return try ntfs3gFileSystem.backendForMount(readOnly: readOnly, source: source,
+                        validateIdentity: {}, makeBackend: { writable in
+                            priorityCounter.factoryCalls += 1
+                            return try backend(image, writable: writable, counter: priorityCounter)
+                        })
+                }, onContainerStatusChange: { _ in })
+            let priorityRoot = try priority.activate(taskOptions: activation)
+            try priority.mountVolume(taskOptions: mounting)
+            do {
+                _ = try await priority.createItem(named: FSFileName(string: "阶段冲突不能写入"), type: .directory,
+                    inDirectory: priorityRoot, attributes: FSItem.SetAttributesRequest())
+                preconditionFailure("任一阶段明确RO时不能被RW覆盖")
+            } catch { precondition((error as NSError).code == Int(EROFS)) }
+            await priority.unmount(); try await priority.deactivate(); priority.teardown()
+            precondition(priorityCounter.factoryCalls == 0 && priorityCounter.cleanups == 1)
+            precondition((try? Data(contentsOf: URL(fileURLWithPath: image))) == priorityBefore)
+        }
+        print("阶段冲突通过：激活RO和挂载RO分别优先，未创建可写后端，普通镜像字节不变。")
         print("生命周期通过：激活只读根项、mount身份拒绝且镜像不变、重开失败清理、重复激活和挂载保护、析构释放、读写→只读→读写重挂载、同一根项与既有文件有效。")
         print("卸载同步故障注入通过：保留notReady、拒绝后续激活和同步、不重复清理；关闭错误注入也保留notReady并阻止重开；均为适配层边界注入。")
         print("此测试未调用系统挂载；mount失败后的守护进程unload及直接detach需要系统验证。")
