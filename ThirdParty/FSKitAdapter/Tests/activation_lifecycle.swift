@@ -310,6 +310,31 @@ struct ActivationLifecycle {
         print("阶段冲突通过：激活RO和挂载RO分别优先，未创建可写后端，普通镜像字节不变。")
         print("生命周期通过：激活只读根项、mount身份拒绝且镜像不变、重开失败清理、重复激活和挂载保护、析构释放、读写→只读→读写重挂载、同一根项与既有文件有效。")
         print("卸载同步故障注入通过：保留notReady、拒绝后续激活和同步、不重复清理；关闭错误注入也保留notReady并阻止重开；均为适配层边界注入。")
+        // 真实15.4观察：激活收到RW与介质标记，但系统未调用mount。
+        let legacyCounter = Counter()
+        let legacy = try ntfs3gVolume(backend: backend(image, counter: legacyCounter),
+            mountBackend: { options, _, source in
+                let readOnly = try ntfs3gFileSystem.resolvedMountReadOnly(options, resourceWritable: true)
+                return try ntfs3gFileSystem.backendForMount(readOnly: readOnly, source: source,
+                    validateIdentity: {}, makeBackend: { writable in
+                        legacyCounter.factoryCalls += 1
+                        return try backend(image, writable: writable, counter: legacyCounter)
+                    })
+            }, onContainerStatusChange: { _ in }, legacyActivationPolicy: { options in
+                try !ntfs3gFileSystem.resolvedMountReadOnly(options, resourceWritable: true)
+            })
+        let legacyRoot = try legacy.activate(taskOptions: ["rw,nosuid,writeflow-media-id=9"])
+        precondition(legacyCounter.factoryCalls == 0, "激活不得提前打开可写后端")
+        let (legacyDirectory, _) = try await legacy.createItem(named: FSFileName(string: "旧激活中文目录"), type: .directory,
+            inDirectory: legacyRoot, attributes: FSItem.SetAttributesRequest())
+        let (legacyFile, _) = try await legacy.createItem(named: FSFileName(string: "中文内容.txt"), type: .file,
+            inDirectory: legacyDirectory, attributes: FSItem.SetAttributesRequest())
+        let legacyBytes = Data("无mount回调仍须完整写前门禁".utf8)
+        let legacyCount = try await legacy.write(contents: legacyBytes, to: legacyFile, at: 0)
+        precondition(legacyCount == legacyBytes.count && legacyCounter.factoryCalls == 1)
+        try await legacy.synchronize(flags: .wait)
+        await legacy.unmount(); try await legacy.deactivate(); legacy.teardown()
+        precondition(legacyCounter.cleanups == 2)
         print("此测试未调用系统挂载；mount失败后的守护进程unload及直接detach需要系统验证。")
     }
 }

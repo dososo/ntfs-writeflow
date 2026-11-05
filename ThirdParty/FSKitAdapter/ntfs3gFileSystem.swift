@@ -181,6 +181,15 @@ final class ntfs3gFileSystem: FSUnaryFileSystem, FSUnaryFileSystemOperations,
         do {
             // ntfs3gVolume takes ownership of the backend; on failure its init frees
             // the backend and runs cleanup itself.
+            let legacyActivationPolicy: (([String]) throws -> Bool)?
+            if #unavailable(macOS 26.0) {
+                legacyActivationPolicy = { activationOptions in
+                    let explicitOptions = options.taskOptions + activationOptions
+                    try Self.validateIdentity(resource, options: explicitOptions)
+                    return try !Self.resolvedMountReadOnly(explicitOptions, resourceWritable: resourceWritable,
+                        blockResource: resource is FSBlockDeviceResource)
+                }
+            } else { legacyActivationPolicy = nil }
             let vol = try ntfs3gVolume(backend: made,
                                        mountBackend: { mountOptions, currentReadOnly, readOnlyBackend in
                                            let explicitOptions = options.taskOptions + mountOptions
@@ -201,7 +210,7 @@ final class ntfs3gFileSystem: FSUnaryFileSystem, FSUnaryFileSystemOperations,
                                        },
                                        onContainerStatusChange: { [weak self] status in
                                            self?.containerStatus = status
-                                       })
+                                       }, legacyActivationPolicy: legacyActivationPolicy)
             self.volume = vol
             containerStatus = .ready
             debugLog("loadResource success name=\(vol.name.string ?? "") uuid=\(vol.volumeID.uuid.uuidString) initialReadOnly=true defaultReadOnly=\(defaultReadOnly)")

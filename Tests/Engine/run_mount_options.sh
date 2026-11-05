@@ -23,7 +23,7 @@ for ARCH in "${ARCHITECTURES[@]}"; do
     -c "$BASE/Tests/lifecycle_faults.c" -o "$OUT/faults-$ARCH.o"
   xcrun clang -arch "$ARCH" -mmacosx-version-min=15.4 -fobjc-arc -fmodules \
     -I ThirdParty/NTFSBridge -c "$BASE/ntfs_device_fskit.m" -o "$OUT/backend-$ARCH.o"
-  for TEST in policy_checks activation_lifecycle; do
+  for TEST in policy_checks activation_lifecycle legacy_activation; do
     xcrun swiftc -swift-version 5 -warnings-as-errors -target "$ARCH-apple-macos15.4" \
       -import-objc-header "$BASE/Tests/lifecycle_bridging.h" -I ThirdParty/NTFSBridge \
       "$BASE/ntfs3gFileSystem.swift" "$BASE/ntfs3gVolume.swift" "$BASE/ntfs3gItem.swift" \
@@ -42,8 +42,12 @@ for name in sys.argv[1:]:
 PY
   "$ENGINE/ntfsprogs/mkntfs" -F -Q -L MountOptions "$IMAGE" > "$OUT/格式化-$ARCH.log" 2>&1
   arch "-$ARCH" "$OUT/activation_lifecycle-$ARCH" "$IMAGE" "$INVALID" > "$OUT/生命周期-$ARCH.log" 2>&1
+  arch "-$ARCH" "$OUT/legacy_activation-$ARCH" "$IMAGE" "$INVALID" > "$OUT/旧激活-$ARCH.log" 2>&1
   "$ENGINE/ntfsprogs/ntfscat" "$IMAGE" '/挂载参数中文目录/中文内容.txt' > "$OUT/独立复读-$ARCH.txt"
   printf '仅挂载阶段显式读写' > "$OUT/预期内容-$ARCH.txt"
   cmp "$OUT/独立复读-$ARCH.txt" "$OUT/预期内容-$ARCH.txt"
+  "$ENGINE/ntfsprogs/ntfscat" "$IMAGE" '/旧激活中文目录/中文内容.txt' > "$OUT/旧激活独立复读-$ARCH.txt"
+  printf '无mount回调仍须完整写前门禁' > "$OUT/旧激活预期内容-$ARCH.txt"
+  cmp "$OUT/旧激活独立复读-$ARCH.txt" "$OUT/旧激活预期内容-$ARCH.txt"
 done
 echo "挂载选项与真实引擎生命周期回归通过：$OUT"
