@@ -101,7 +101,7 @@ See [installation and removal](发布/安装与卸载.md) for the full procedure
 
 ## Validation and limits
 
-Tests already performed include:
+以下表格含历史版本的分项证据；0.2.0本轮回归与未验范围以[预览发行说明](发布/0.2.0预览发行说明.md)和Release验证附件为准：
 
 | Scope | Verified behavior |
 | --- | --- |
