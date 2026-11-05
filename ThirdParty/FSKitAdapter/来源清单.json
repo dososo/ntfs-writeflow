@@ -12,7 +12,7 @@
       "文件": "ntfs3gFileSystem.swift",
       "上游路径": "ntfs3g/ntfs3gFileSystem.swift",
       "上游SHA256": "0c80ecf8a10f97d86c126901b507269a18d615076bf36447e40413c8e4a831d3",
-      "本地SHA256": "c3acac8c8b1d74c17a56ebf4d53d333b2d3b596213166aa69524242c3d64813f"
+      "本地SHA256": "2425bb7c959e33725e83f902e8320913eee6ba66773464245f0224afca2cdbd8"
     },
     {
       "文件": "ntfs3gItem.swift",
@@ -24,7 +24,7 @@
       "文件": "ntfs3gVolume.swift",
       "上游路径": "ntfs3g/ntfs3gVolume.swift",
       "上游SHA256": "7f529f9540196c61c57434a5b9986302b716c167c8e3144de9a46972c64515cc",
-      "本地SHA256": "e9d69c1404b0234f24391beb4471cc3292d2a4dea13fa54d9d0b6c464f81fee2"
+      "本地SHA256": "2357738937ab9b4aef3d545464fb53bbe1882d2d272b27930d7745760733c6da"
     },
     {
       "文件": "ntfs_device_fskit.m",

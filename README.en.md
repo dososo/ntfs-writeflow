@@ -12,17 +12,17 @@ Read and write NTFS on your Mac, with a clear view of your disks.
 [![macOS](https://img.shields.io/badge/macOS-26%2B-23334B.svg)](#install)
 [![Architecture](https://img.shields.io/badge/Architecture-Apple%20Silicon-168B86.svg)](#install)
 [![Status](https://img.shields.io/badge/Status-Development%20candidate-B66C24.svg)](#validation-and-limits)
-[![Version](https://img.shields.io/badge/Version-0.1.2--Preview-23334B.svg)](https://github.com/dososo/ntfs-writeflow/releases/tag/v0.1.2)
+[![Version](https://img.shields.io/badge/Version-0.2.0--Preview-23334B.svg)](https://github.com/dososo/ntfs-writeflow/releases/tag/v0.2.0)
 [![Built with](https://img.shields.io/badge/SwiftUI%20%2B%20FSKit%20%2B%20NTFS--3G-23334B.svg)](#architecture)
 
 <p>
-  <a href="https://github.com/dososo/ntfs-writeflow/releases/download/v0.1.2/NTFS-WriteFlow-0.1.2-arm64.dmg"><strong>⬇ Download for Mac (DMG)</strong></a>
+  <a href="https://github.com/dososo/ntfs-writeflow/releases/download/v0.2.0/NTFS-WriteFlow-0.2.0-arm64.dmg"><strong>⬇ Download for Mac (DMG)</strong></a>
   &nbsp;·&nbsp;
-  <a href="https://github.com/dososo/ntfs-writeflow/releases/download/v0.1.2/NTFS-WriteFlow-0.1.2-arm64.zip">Download ZIP</a>
+  <a href="https://github.com/dososo/ntfs-writeflow/releases/download/v0.2.0/NTFS-WriteFlow-0.2.0-arm64.zip">Download ZIP</a>
   &nbsp;·&nbsp;
-  <a href="https://github.com/dososo/ntfs-writeflow/releases/tag/v0.1.2">All release assets</a>
+  <a href="https://github.com/dososo/ntfs-writeflow/releases/tag/v0.2.0">All release assets</a>
 </p>
-<p><sub>0.1.2 Preview · Apple Silicon · macOS 26 or later</sub></p>
+<p><sub>0.2.0 Preview · Apple Silicon · macOS 26 or later</sub></p>
 
 </div>
 
@@ -79,13 +79,13 @@ Free distribution and clear data-operation boundaries are both part of the produ
 
 These are actual app screenshots using the dedicated `WriteFlow Demo` image. Temporary device numbers and mount paths in the screenshots are not commands to reuse on another Mac.
 
-0.1.2 reports close-stage errors and clarifies diagnostics. See the [validation record and limits (Chinese)](发布/0.1.2验收记录.md).
+0.2.0 新增逐盘自动挂载、登录启动、会话保护与写前预检，并提供 Issue #3 的挂载会话候选修正。自动管理默认关闭，实体盘与登录等场景仍待验收。[查看预览范围与限制](发布/0.2.0预览发行说明.md)。
 
 ## Install
 
 > **Target:** macOS 26 or later · Apple Silicon. The tested host runs macOS 26.6.2; Intel, older macOS versions, and every macOS 26 point release have not been validated.
 
-Download the [0.1.2 preview release](https://github.com/dososo/ntfs-writeflow/releases/tag/v0.1.2): [DMG installer](https://github.com/dososo/ntfs-writeflow/releases/download/v0.1.2/NTFS-WriteFlow-0.1.2-arm64.dmg) or [app ZIP](https://github.com/dososo/ntfs-writeflow/releases/download/v0.1.2/NTFS-WriteFlow-0.1.2-arm64.zip). The same release includes complete corresponding source, `SHA256SUMS.txt`, and distribution verification records. This remains a development preview.
+Download the [0.2.0 preview release](https://github.com/dososo/ntfs-writeflow/releases/tag/v0.2.0): [DMG installer](https://github.com/dososo/ntfs-writeflow/releases/download/v0.2.0/NTFS-WriteFlow-0.2.0-arm64.dmg) or [app ZIP](https://github.com/dososo/ntfs-writeflow/releases/download/v0.2.0/NTFS-WriteFlow-0.2.0-arm64.zip). The same release includes complete corresponding source, `SHA256SUMS.txt`, and distribution verification records. This remains a development preview.
 
 Installation:
 
@@ -101,7 +101,7 @@ See [installation and removal](发布/安装与卸载.md) for the full procedure
 
 ## Validation and limits
 
-Tests already performed include:
+以下表格含历史版本的分项证据；0.2.0本轮回归与未验范围以[预览发行说明](发布/0.2.0预览发行说明.md)和Release验证附件为准：
 
 | Scope | Verified behavior |
 | --- | --- |
@@ -112,7 +112,7 @@ Tests already performed include:
 
 The app has passed Developer ID signing, Apple notarization, ticket stapling, and local Gatekeeper checks. The DMG and ZIP contain the same validated app. Product source and build resources were frozen before the offline rebuild; public download documentation is updated for this release. Consult `分发验证摘要.json`, `构建对应记录.json`, and `SHA256SUMS.txt` attached to the release for artifact identity and verification scope. Notarization does not establish complete filesystem compatibility.
 
-**Not yet complete:** Windows reading and write-back, Windows filesystem checks, physical power loss or unexpected unplugging, sleep/wake, long-running stress tests, actual multi-user isolation, and clean-Mac installation and full removal. Formatting, complete filesystem checking/repair, login launch, per-volume preferences, and notifications are not all delivered. Testing a dedicated directory does not validate every pre-existing file on a disk.
+**Not yet complete:** Windows reading and write-back, Windows filesystem checks, physical power loss or unexpected unplugging, sleep/wake, long-running stress tests, actual multi-user isolation, and clean-Mac installation and full removal. 格式化、完整校验修复和通知尚未全部交付；登录启动及逐盘偏好已实现，但真实登录与跨账户尚待验收。 Testing a dedicated directory does not validate every pre-existing file on a disk.
 
 See [known issues and release gates](发布/已知问题与发布门禁.md) for scope, retained error observations, and outstanding work.
 

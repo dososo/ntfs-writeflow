@@ -25,12 +25,85 @@ struct ActivationLifecycle {
         let invalidImage = CommandLine.arguments[2]
         let before = try Data(contentsOf: URL(fileURLWithPath: image))
 
+        // 预检必须在开启可写后端之前；失败保持原始介质且错误原因可见。
+        for reason in [Int32(NFSK_CHECK_DIRTY), Int32(NFSK_CHECK_HIBERNATED),
+                       Int32(NFSK_CHECK_JOURNAL), Int32(NFSK_CHECK_METADATA)] {
+            let checkCounter = Counter()
+            let ro = try backend(image, counter: checkCounter)
+            nfsk_test_fail_preflight(reason)
+            do {
+                _ = try ntfs3gFileSystem.checkedWritableBackend(ro.backend, validateIdentity: {},
+                    makeWritable: { checkCounter.factoryCalls += 1; return try backend(image, writable: true, counter: checkCounter) })
+                preconditionFailure("预检失败不应创建可写后端")
+            } catch {
+                precondition((error as NSError).code == Int(EIO))
+                precondition((error as NSError).userInfo["WriteFlowPreflightReason"] as? Int == Int(reason))
+            }
+            nfsk_test_fail_preflight(0)
+            nfsk_backend_free(ro.backend); ro.cleanup()
+            precondition(checkCounter.factoryCalls == 0 && checkCounter.cleanups == 1)
+            precondition((try? Data(contentsOf: URL(fileURLWithPath: image))) == before)
+        }
+        let validCounter = Counter()
+        let validRO = try backend(image, counter: validCounter)
+        var revalidated = false
+        let validRW = try ntfs3gFileSystem.checkedWritableBackend(validRO.backend,
+            validateIdentity: { revalidated = true }, makeWritable: {
+                precondition(revalidated); validCounter.factoryCalls += 1
+                return try backend(image, writable: true, counter: validCounter)
+            })
+        nfsk_backend_free(validRW.backend); validRW.cleanup()
+        nfsk_backend_free(validRO.backend); validRO.cleanup()
+        precondition(validCounter.factoryCalls == 1 && validCounter.cleanups == 2)
+        precondition((try? Data(contentsOf: URL(fileURLWithPath: image))) == before)
+
+        // 只读请求即使预检失败也不能反转成可写；工厂只接收false。
+        let readOnlyCounter = Counter()
+        let readOnlySource = try backend(image, counter: readOnlyCounter)
+        nfsk_test_fail_preflight(Int32(NFSK_CHECK_DIRTY))
+        let explicitRO = try ntfs3gFileSystem.backendForMount(readOnly: true, source: readOnlySource.backend,
+            validateIdentity: {}, makeBackend: { writable in
+                precondition(!writable); readOnlyCounter.factoryCalls += 1
+                return try backend(image, writable: writable, counter: readOnlyCounter)
+            })
+        nfsk_test_fail_preflight(0)
+        precondition(!explicitRO.writable && readOnlyCounter.factoryCalls == 1)
+        nfsk_backend_free(explicitRO.backend); explicitRO.cleanup()
+        nfsk_backend_free(readOnlySource.backend); readOnlySource.cleanup()
+
+        let staleCounter = Counter()
+        let staleRO = try backend(image, counter: staleCounter)
+        expect(ESTALE) {
+            _ = try ntfs3gFileSystem.checkedWritableBackend(staleRO.backend,
+                validateIdentity: { throw posixError(ESTALE) },
+                makeWritable: { staleCounter.factoryCalls += 1; return try backend(image, writable: true, counter: staleCounter) })
+        }
+        nfsk_backend_free(staleRO.backend); staleRO.cleanup()
+        precondition(staleCounter.factoryCalls == 0)
+
+        let gateCounter = Counter()
+        var gateStatus: FSContainerStatus?
+        let gated = try ntfs3gVolume(backend: backend(image, counter: gateCounter),
+            mountBackend: { _, _, source in
+                try ntfs3gFileSystem.checkedWritableBackend(source, validateIdentity: {}, makeWritable: {
+                    gateCounter.factoryCalls += 1; return try backend(image, writable: true, counter: gateCounter)
+                })
+            }, onContainerStatusChange: { gateStatus = $0 })
+        _ = try gated.activate(taskOptions: ["-o", "rw"])
+        nfsk_test_fail_preflight(Int32(NFSK_CHECK_DIRTY))
+        expect(EIO) { try gated.mountVolume() }
+        nfsk_test_fail_preflight(0)
+        precondition(gateStatus?.state == .notReady && gateCounter.factoryCalls == 0 && gateCounter.cleanups == 1)
+        expect(ENXIO) { _ = try gated.activate(taskOptions: []) }
+        precondition((try? Data(contentsOf: URL(fileURLWithPath: image))) == before)
+        print("写前门禁通过：4类预检错误零可写工厂、成功后身份复核、身份变化拒绝、挂载预检失败清理且镜像不变。")
+
         let rejectedCounter = Counter()
         var captured: CapturedResource? = CapturedResource()
         let weakCaptured = WeakResource()
         weakCaptured.value = captured
         let rejected = try ntfs3gVolume(backend: backend(image, counter: rejectedCounter),
-            mountBackend: { [resource = captured!] options, _ in
+            mountBackend: { [resource = captured!] options, _, _ in
                 withExtendedLifetime(resource) { }
                 precondition(options == ["-o", "rw,writeflow-media-id=9"])
                 rejectedCounter.factoryCalls += 1
@@ -59,7 +132,7 @@ struct ActivationLifecycle {
         let originalCounter = Counter()
         let replacementCounter = Counter()
         let reopenFailure = try ntfs3gVolume(backend: backend(image, counter: originalCounter),
-            mountBackend: { _, _ in try backend(invalidImage, writable: true, counter: replacementCounter) },
+            mountBackend: { _, _, _ in try backend(invalidImage, writable: true, counter: replacementCounter) },
             onContainerStatusChange: { _ in })
         _ = try reopenFailure.activate(taskOptions: ["-o", "rw"])
         do { try reopenFailure.mountVolume(); preconditionFailure("无效后端不应挂载成功") }
@@ -72,7 +145,7 @@ struct ActivationLifecycle {
 
         let activeCounter = Counter()
         var active: ntfs3gVolume? = try ntfs3gVolume(backend: backend(image, counter: activeCounter),
-            mountBackend: { _, _ in nil }, onContainerStatusChange: { _ in })
+            mountBackend: { _, _, _ in nil }, onContainerStatusChange: { _ in })
         _ = try active!.activate(taskOptions: [])
         expect(EBUSY) { _ = try active!.activate(taskOptions: []) }
         try active!.mountVolume()
@@ -87,10 +160,15 @@ struct ActivationLifecycle {
 
         let rwCounter = Counter()
         let volume = try ntfs3gVolume(backend: backend(image, counter: rwCounter),
-            mountBackend: { options, currentReadOnly in
+            mountBackend: { options, currentReadOnly, source in
                 rwCounter.factoryCalls += 1
                 let writable = !ntfs3gFileSystem.defaultsToReadOnly(options)
-                return writable == !currentReadOnly ? nil : try backend(image, writable: writable, counter: rwCounter)
+                if writable == !currentReadOnly { return nil }
+                if writable {
+                    return try ntfs3gFileSystem.checkedWritableBackend(source, validateIdentity: {},
+                        makeWritable: { try backend(image, writable: true, counter: rwCounter) })
+                }
+                return try backend(image, writable: false, counter: rwCounter)
             }, onContainerStatusChange: { _ in })
         let root = try volume.activate(taskOptions: ["-o", "rw"])
         try volume.mountVolume()
@@ -124,7 +202,7 @@ struct ActivationLifecycle {
         let failedSyncCounter = Counter()
         var failedSyncStatus: FSContainerStatus?
         let failedSync = try ntfs3gVolume(backend: backend(image, counter: failedSyncCounter),
-            mountBackend: { _, _ in nil }, onContainerStatusChange: { failedSyncStatus = $0 })
+            mountBackend: { _, _, _ in nil }, onContainerStatusChange: { failedSyncStatus = $0 })
         _ = try failedSync.activate(taskOptions: [])
         try failedSync.mountVolume()
         nfsk_test_fail_sync(1)
@@ -143,7 +221,7 @@ struct ActivationLifecycle {
         let failedCloseCounter = Counter()
         var failedCloseStatus: FSContainerStatus?
         let failedClose = try ntfs3gVolume(backend: backend(image, counter: failedCloseCounter),
-            mountBackend: { _, _ in nil }, onContainerStatusChange: { failedCloseStatus = $0 })
+            mountBackend: { _, _, _ in nil }, onContainerStatusChange: { failedCloseStatus = $0 })
         _ = try failedClose.activate(taskOptions: [])
         try failedClose.mountVolume()
         try await failedClose.synchronize(flags: .wait)

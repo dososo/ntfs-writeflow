@@ -3,22 +3,25 @@ import AppKit
 
 @main struct NTFSWorkbenchApp: App {
     @NSApplicationDelegateAdaptor(WorkbenchDelegate.self) private var delegate
-    @State private var model = AppModel()
+    @State private var model: AppModel
+    @Environment(\.openWindow) private var openWindow
+
+    init() {
+        let initial = AppModel()
+        _model = State(initialValue: initial)
+        delegate.model = initial
+    }
     @AppStorage("showMenuBar") private var showMenuBar = true
 
     var body: some Scene {
-        WindowGroup("NTFS 畅写 · NTFS WriteFlow", id: "main") {
+        let _ = delegate.windowOpener = openWindow
+        Window("NTFS 畅写 · NTFS WriteFlow", id: "main") {
             ContentView(model: model)
                 .frame(minWidth: 840, minHeight: 560)
-                .task {
-                    await model.refresh()
-                    while !Task.isCancelled {
-                        try? await Task.sleep(for: .seconds(20))
-                        if !Task.isCancelled && model.automaticRefresh { await model.refresh() }
-                    }
-                }
         }
         .defaultSize(width: 1040, height: 680)
+        .defaultLaunchBehavior(.suppressed)
+        .restorationBehavior(.disabled)
         .commands {
             CommandGroup(after: .newItem) {
                 Button("刷新磁盘") { Task { await model.refresh() } }
@@ -31,8 +34,11 @@ import AppKit
             DiagnosticsView(model: model).frame(minWidth: 530, minHeight: 400)
         }
         .defaultSize(width: 560, height: 450)
+        .defaultLaunchBehavior(.suppressed)
+        .restorationBehavior(.disabled)
 
         Settings { WorkbenchSettingsView(model: model) }
+            .restorationBehavior(.disabled)
 
         MenuBarExtra("NTFS 畅写", systemImage: "externaldrive", isInserted: $showMenuBar) {
             WorkbenchMenu(model: model)
@@ -40,9 +46,49 @@ import AppKit
     }
 }
 
-final class WorkbenchDelegate: NSObject, NSApplicationDelegate {
+@MainActor final class WorkbenchDelegate: NSObject, NSApplicationDelegate {
+    weak var model: AppModel?
+    var windowOpener: OpenWindowAction?
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        model?.startAutomaticSessionMonitoring()
+        model?.recordSessionVerification("即将完成启动")
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        let loginLaunch = LoginLaunchService.wasLaunchedAtLogin
+        Task {
+            await model?.startMonitoring(launchedAtLogin:loginLaunch)
+            model?.recordSessionVerification("磁盘监控启动完成")
+        }
+        if loginLaunch {
+            NSApp.setActivationPolicy(.accessory)
+
+        } else {
+            NSApp.setActivationPolicy(.regular)
+            NSApp.unhide(nil)
+            windowOpener?(id: "main")
+            NSApp.activate()
+            model?.requestAutomaticForegroundConfirmation()
+        }
+        model?.recordSessionVerification("启动完成")
+        model?.scheduleSessionVerificationSamples()
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.unhide(nil)
+        windowOpener?(id: "main")
+        NSApp.activate()
+        model?.requestAutomaticForegroundConfirmation()
+        model?.recordSessionVerification("重新打开")
+        return false
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        model?.stopMonitoring()
+        model?.recordSessionVerification("正常退出")
     }
 }

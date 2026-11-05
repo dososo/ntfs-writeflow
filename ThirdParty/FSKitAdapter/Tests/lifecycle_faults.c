@@ -17,3 +17,11 @@ int nfsk_umount(ntfs_fskit_volume *volume) {
     int rc = nfsk_umount_real(volume);
     return rc ? rc : (fail_close ? -EIO : 0);
 }
+
+static int fail_preflight;
+int nfsk_quick_check_real(void *resource, int *reason);
+void nfsk_test_fail_preflight(int reason) { fail_preflight = reason; }
+int nfsk_quick_check(void *resource, int *reason) {
+    if (fail_preflight) { if (reason) *reason = fail_preflight; return -EIO; }
+    return nfsk_quick_check_real(resource, reason);
+}

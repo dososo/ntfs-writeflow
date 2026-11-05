@@ -8,7 +8,13 @@ import ServiceManagement
         didSet { if oldValue != selectedID { operationMessage = nil } }
     }
     var isRefreshing = false
-    var isOperating = false
+    var isOperating = false {
+        didSet {
+            if oldValue && !isOperating && !autoPending.isEmpty {
+                Task { await drainAutomaticWork() }
+            }
+        }
+    }
     var inventoryIsCurrent = false
     var lastRefresh: Date?
     var unreadableCount = 0
@@ -24,19 +30,74 @@ import ServiceManagement
     var automaticRefresh = UserDefaults.standard.object(forKey: "automaticRefresh") as? Bool ?? true {
         didSet { UserDefaults.standard.set(automaticRefresh, forKey: "automaticRefresh") }
     }
-    private let disks = DiskService()
+    let disks = DiskService()
+    @ObservationIgnored let autoDefaults: UserDefaults
+    @ObservationIgnored let autoPolicyStore: AutoMountPolicyStore
+    @ObservationIgnored let autoCoordinator: AutoMountCoordinator
+    @ObservationIgnored var autoRuntime: AutoMountRuntime?
+    @ObservationIgnored var diskMonitor: DiskEventMonitor?
+    @ObservationIgnored var autoGenerations: [UInt64: UInt64] = [:]
+    @ObservationIgnored var autoNative: [UInt64: DiskEventSnapshot] = [:]
+    @ObservationIgnored var autoCanonical: [UInt64: AutoMountFingerprint] = [:]
+    @ObservationIgnored var autoPending: [UInt64: AutoMountCandidate] = [:]
+    @ObservationIgnored var generationCounter: UInt64 = 0
+    @ObservationIgnored var autoMonitorEpoch: UInt64 = 0
+    @ObservationIgnored var autoPolicyEpoch: UInt64 = 0
+    @ObservationIgnored var autoSuppressedMedia: Set<UInt64> = []
+    @ObservationIgnored var autoSuppressedWholeMedia: Set<UInt64> = []
+    @ObservationIgnored private var disappearedMediaIDs: Set<UInt64> = []
+    @ObservationIgnored var autoEnvironmentQueryID: UInt64 = 0
+    @ObservationIgnored var autoSessionMonitor: AutoMountSessionMonitor?
+    @ObservationIgnored var autoSessionMonitorEpoch: UInt64 = 0
+    @ObservationIgnored var autoSessionRevocationEpoch: UInt64 = 0
+    @ObservationIgnored var autoForegroundRequest: (epoch: UInt64, deadline: TimeInterval)?
+    @ObservationIgnored let verificationProcessID = UUID().uuidString
+    @ObservationIgnored var verificationRequestID: String?
+    @ObservationIgnored var verificationSequence = 0
+    @ObservationIgnored var verificationBinarySHA: String?
+    var autoIsOperating = false
+    var autoStatus = "自动挂载已关闭。"
+    var loginState = LoginLaunchState.pending
+    var loginEnabled: Bool { loginState.isEnabled }
+    var loginStatus: String { loginState.title }
+    @ObservationIgnored var loginRegistrationRequired = false
+    var autoEnvironment = AutoMountEnvironment(isClear: false, reason: "尚未核对驱动竞争状态。")
+    var autoSession = AutoMountSessionState()
+    var autoEnabled = false {
+        didSet {
+            autoEnvironmentQueryID &+= 1
+            if oldValue != autoEnabled {
+                autoPolicyEpoch &+= 1
+                autoCoordinator.cancelPending()
+                autoPending.removeAll()
+                diskMonitor?.suppressCurrentlyObserved()
+            }
+            autoDefaults.set(autoEnabled, forKey: "writeflow.autoMount.enabled")
+            if !autoEnabled { cancelAutomaticWork(); autoStatus = "自动挂载已关闭。" }
+            Task { await refreshAutoEnvironment() }
+        }
+    }
+
+    init(defaults: UserDefaults = .standard, autoMountRuntime: AutoMountRuntime? = nil) {
+        autoDefaults = defaults
+        autoRuntime = autoMountRuntime
+        let store = AutoMountPolicyStore(defaults: defaults)
+        autoPolicyStore = store
+        autoCoordinator = AutoMountCoordinator(store: store)
+        autoEnabled = defaults.bool(forKey: "writeflow.autoMount.enabled")
+    }
     private var isQueryingExtension = false
     private var ejectedMedia = EjectedMediaSession()
 
     var volumes: [VolumeRecord] { VolumeRecord.visible(records.filter { !ejectedMedia.contains($0) }, includeOtherVolumes: showOtherVolumes) }
     var ntfsVolumes: [VolumeRecord] { VolumeRecord.visible(records.filter { !ejectedMedia.contains($0) }, includeOtherVolumes: false) }
     var selectedVolume: VolumeRecord? { volumes.first { $0.id == selectedID } }
-    var isBusy: Bool { isRefreshing || isOperating }
+    var isBusy: Bool { isRefreshing || isOperating || autoIsOperating }
 
     func refresh() async {
         guard !isBusy else { return }
         isRefreshing = true
-        defer { isRefreshing = false }
+        defer { isRefreshing = false; if !autoPending.isEmpty { Task { await drainAutomaticWork() } } }
         do {
             let snapshot = try await disks.snapshot()
             apply(snapshot)
@@ -51,15 +112,21 @@ import ServiceManagement
         // 同时只保留一项诊断查询，避免自动刷新堆积系统请求。
         if !isQueryingExtension {
             isQueryingExtension = true
+            let queryEpoch = autoMonitorEpoch
             Task { [weak self] in
                 let diagnostic = await ExtensionDiagnostic.load()
-                self?.extensionDiagnostic = diagnostic
-                self?.isQueryingExtension = false
+                guard let self else { return }
+                self.isQueryingExtension = false
+                guard self.autoMonitorEpoch == queryEpoch else { return }
+                self.extensionDiagnostic = diagnostic
+                if !diagnostic.isEnabled { self.cancelAutomaticWork() }
+                self.updateAutomaticApproval()
             }
         }
     }
 
     func refreshMountHelperStatus() {
+        let wasEnabled = mountHelperEnabled
         let state = SMAppService.daemon(plistName: PrivilegedMountConfiguration.daemonPlistName).status
         mountHelperEnabled = state == .enabled
         mountHelperNeedsApproval = state == .requiresApproval
@@ -70,6 +137,8 @@ import ServiceManagement
         case .notFound: mountHelperStatus = "系统尚未识别挂载服务"
         @unknown default: mountHelperStatus = "系统返回未知状态"
         }
+        if wasEnabled && !mountHelperEnabled { cancelAutomaticWork() }
+        updateAutomaticApproval()
     }
 
     func registerMountHelper() {
@@ -86,6 +155,7 @@ import ServiceManagement
 
     func unregisterMountHelper() async {
         guard !isBusy else { return }
+        cancelAutomaticWork()
         isOperating = true
         defer { isOperating = false; refreshMountHelperStatus() }
         do {
@@ -117,7 +187,11 @@ import ServiceManagement
     }
 
     func eject(_ volume: VolumeRecord) async {
+        recordSessionVerification("请求弹出")
         guard !isBusy, inventoryIsCurrent else { return }
+        guard autoCoordinator.beginManualOperation() else { return }
+        suppressAutomatic(for: volume)
+        defer { autoCoordinator.endManualOperation(); Task { await drainAutomaticWork() } }
         isOperating = true
         operationMessage = nil
         defer { isOperating = false }
@@ -140,11 +214,15 @@ import ServiceManagement
     }
 
     func mount(_ volume: VolumeRecord, readOnly: Bool) async {
+        recordSessionVerification("请求挂载")
         guard !isBusy, inventoryIsCurrent, !ejectedMedia.contains(volume) else { return }
         guard extensionDiagnostic.isEnabled else {
             errorMessage = "请先在系统设置 → 通用 → 登录项与扩展 → 按类别 → 文件系统扩展中启用 NTFSFileSystem。"
             return
         }
+        guard autoCoordinator.beginManualOperation() else { return }
+        suppressAutomatic(for: volume)
+        defer { autoCoordinator.endManualOperation(); Task { await drainAutomaticWork() } }
         isOperating = true
         operationMessage = nil
         defer { isOperating = false }
@@ -160,7 +238,11 @@ import ServiceManagement
     }
 
     func unmount(_ volume: VolumeRecord) async {
+        recordSessionVerification("请求卸载")
         guard !isBusy, inventoryIsCurrent else { return }
+        guard autoCoordinator.beginManualOperation() else { return }
+        suppressAutomatic(for: volume)
+        defer { autoCoordinator.endManualOperation(); Task { await drainAutomaticWork() } }
         isOperating = true
         operationMessage = nil
         defer { isOperating = false }
@@ -199,10 +281,24 @@ import ServiceManagement
         catch { errorMessage = "诊断保存失败：\(error.localizedDescription)" }
     }
 
-    private func apply(_ snapshot: DiskSnapshot) {
-        let revoked = ejectedMedia.reconcile(records: snapshot.records, unreadableCount: snapshot.unreadableCount)
+    func recordDisappearance(mediaID: UInt64) {
+        // IORegistry身份在本次系统启动期间唯一；旧快照不能使已消失身份复活。
+        disappearedMediaIDs.insert(mediaID)
+        guard automaticRefresh else { return }
+        records = records.filter { !isDisappeared($0) }
+        normalizeSelection()
+    }
+
+    private func isDisappeared(_ record: VolumeRecord) -> Bool {
+        (record.mediaRegistryID.map { disappearedMediaIDs.contains($0) } ?? false)
+            || (record.wholeMediaRegistryID.map { disappearedMediaIDs.contains($0) } ?? false)
+    }
+
+    func apply(_ snapshot: DiskSnapshot) {
+        let current = snapshot.records.filter { !isDisappeared($0) }
+        let revoked = ejectedMedia.reconcile(records: current, unreadableCount: snapshot.unreadableCount)
         if revoked || snapshot.unreadableCount > 0 { operationMessage = nil }
-        records = snapshot.records
+        records = current
         unreadableCount = snapshot.unreadableCount
         inventoryIsCurrent = true
         lastRefresh = Date()

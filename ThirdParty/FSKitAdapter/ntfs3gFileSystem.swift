@@ -79,6 +79,41 @@ final class ntfs3gFileSystem: FSUnaryFileSystem, FSUnaryFileSystemOperations,
         return false
     }
 
+    // 调用时原只读引擎已关闭，resource仍是系统最初打开的同一资源。
+    // 预检不修复或重放日志；成功后复核身份，最后才允许创建可写后端。
+    static func checkedWritableBackend(_ readOnlyBackend: UnsafeMutableRawPointer,
+                                       validateIdentity: () throws -> Void,
+                                       makeWritable: () throws -> NTFSBackend) throws -> NTFSBackend {
+        var reason: Int32 = 0
+        let rc = nfsk_quick_check(readOnlyBackend, &reason)
+        guard rc == 0 else {
+            let detail: String
+            switch reason {
+            case Int32(NFSK_CHECK_DIRTY): detail = "NTFS 脏卷或磁盘检查尚未完成。"
+            case Int32(NFSK_CHECK_HIBERNATED): detail = "Windows 休眠或快速启动状态阻止读写。"
+            case Int32(NFSK_CHECK_JOURNAL): detail = "NTFS 日志未清理或不可读。"
+            default: detail = "无法读取或验证 NTFS 核心元数据。"
+            }
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(-rc), userInfo: [
+                NSLocalizedDescriptionKey: detail + " 未开启写入，未尝试修复。",
+                "WriteFlowPreflightReason": Int(reason)
+            ])
+        }
+        try validateIdentity()
+        return try makeWritable()
+    }
+
+    static func backendForMount(readOnly: Bool, source: UnsafeMutableRawPointer,
+                                validateIdentity: () throws -> Void,
+                                makeBackend: (Bool) throws -> NTFSBackend) throws -> NTFSBackend {
+        if readOnly {
+            try validateIdentity()
+            return try makeBackend(false)
+        }
+        return try checkedWritableBackend(source, validateIdentity: validateIdentity,
+                                          makeWritable: { try makeBackend(true) })
+    }
+
     // MARK: probe / load / unload
 
     func probeResource(resource: FSResource, replyHandler: @escaping (FSProbeResult?, (any Error)?) -> Void) {
@@ -127,17 +162,21 @@ final class ntfs3gFileSystem: FSUnaryFileSystem, FSUnaryFileSystemOperations,
             // ntfs3gVolume takes ownership of the backend; on failure its init frees
             // the backend and runs cleanup itself.
             let vol = try ntfs3gVolume(backend: made,
-                                       mountBackend: { activationOptions, currentReadOnly in
+                                       mountBackend: { activationOptions, currentReadOnly, readOnlyBackend in
                                            let explicitOptions = options.taskOptions + activationOptions
                                            try Self.validateIdentity(resource, options: explicitOptions)
                                            let readOnly = Self.requestsReadOnly(explicitOptions) ? true
                                                : Self.requestsReadWrite(explicitOptions) ? false : defaultReadOnly
                                            guard readOnly != currentReadOnly else { return nil }
-                                           var error: Int32 = 0
-                                           guard let backend = Self.makeBackend(resource, allowWrite: !readOnly, out: &error) else {
-                                               throw posixError(error)
-                                           }
-                                           return backend
+                                           return try Self.backendForMount(readOnly: readOnly, source: readOnlyBackend,
+                                               validateIdentity: { try Self.validateIdentity(resource, options: explicitOptions) },
+                                               makeBackend: { writable in
+                                                   var error: Int32 = 0
+                                                   guard let backend = Self.makeBackend(resource, allowWrite: writable, out: &error) else {
+                                                       throw posixError(error)
+                                                   }
+                                                   return backend
+                                               })
                                        },
                                        onContainerStatusChange: { [weak self] status in
                                            self?.containerStatus = status

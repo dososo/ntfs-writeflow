@@ -11,17 +11,18 @@ enum HelperCommand {
         }
         let path = PrivilegedMountConfiguration.namespace + "/\(userID)/\(token)/volume"
         let options = "\(request.readOnly ? "ro" : "rw"),nosuid,nodev,noowners,nobrowse,writeflow-media-id=\(request.mediaRegistryID)"
-        return ("/sbin/mount", ["-F", "-t", "blntfs", "-o", options, "/dev/\(request.deviceID)", path])
+        return ("/bin/launchctl", ["asuser", String(userID), "/sbin/mount",
+                "-F", "-t", "blntfs", "-o", options, "/dev/\(request.deviceID)", path])
     }
 
     static func environment(for executable: String, mountUserID: UInt32? = nil) throws -> [String: String] {
         var values = ["PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "C"]
         if let mountUserID {
-            guard executable == "/sbin/mount", mountUserID >= 501, mountUserID != UInt32.max else {
+            guard executable == "/bin/launchctl", mountUserID >= 501, mountUserID != UInt32.max else {
                 throw HelperFailure(message: "仅固定挂载程序可接收可信用户身份。")
             }
-            // Apple disklib/fskit_support.m 使用 SUDO_UID 设置真实UID，并保留有效root UID。
-            // 仅挂载子进程接收该值；不继承用户环境、不改变多线程助手的进程凭据。
+            // asuser 为固定挂载子进程采用用户的 bootstrap 和安全审计会话，不改 UID。
+            // mount 再用 SUDO_UID 发现用户扩展；不改变多线程助手的凭据或继承用户环境。
             values["SUDO_UID"] = String(mountUserID)
         }
         return values
