@@ -216,7 +216,7 @@ import ServiceManagement
     func mount(_ volume: VolumeRecord, readOnly: Bool) async {
         recordSessionVerification("请求挂载")
         guard !isBusy, inventoryIsCurrent, !ejectedMedia.contains(volume) else { return }
-        guard extensionDiagnostic.isEnabled else {
+        guard extensionDiagnostic.canAttemptManualMount else {
             errorMessage = StorageBackend.current == .macFUSE ? extensionDiagnostic.detail : "请先在系统设置 → 通用 → 登录项与扩展 → 按类别 → 文件系统扩展中启用 NTFSFileSystem。"
             return
         }
