@@ -65,8 +65,13 @@ final class HelperMedia {
             throw HelperFailure(message: "介质请求无效。")
         }
         let data = try HelperCommand.run("/usr/sbin/diskutil", ["info", "-plist", request.deviceID])
-        guard let info = try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
-              let volume = VolumeRecord(info: info), volume.id == request.deviceID,
+        guard var info = try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else {
+            throw HelperFailure(message: "无法读取介质信息，已停止操作。")
+        }
+        let mounts = try MountedFileSystemReader.deviceMounts(request.deviceID)
+        guard mounts.count <= 1 else { throw HelperFailure(message: "同一设备存在多个挂载，已停止操作。") }
+        if let mounted = mounts.first { info["MountPoint"] = mounted.mountPoint }
+        guard let volume = VolumeRecord(info: info, mountedFileSystem: mounts.first), volume.id == request.deviceID,
               volume.isInternal == false, volume.isNTFS, volume.mediaByteCount == request.mediaByteCount,
               let session = DASessionCreate(nil),
               let disk = DADiskCreateFromBSDName(nil, session, request.deviceID),
@@ -102,6 +107,21 @@ final class HelperMedia {
               whole[kDADiskDescriptionMediaBSDNameKey as String] as? String == volume.wholeDiskID,
               (description[kDADiskDescriptionMediaSizeKey as String] as? NSNumber)?.int64Value == request.mediaByteCount else {
             throw HelperFailure(message: "介质已移除或身份发生变化，已停止操作。")
+        }
+    }
+
+    func validateHandle(_ handle: FileHandle, request: PrivilegedMountRequest) throws {
+        try validate(request)
+        let descriptor = handle.fileDescriptor
+        var status = stat()
+        let flags = fcntl(descriptor, F_GETFL)
+        guard let major = IORegistryEntryCreateCFProperty(media, "BSD Major" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? NSNumber,
+              let minor = IORegistryEntryCreateCFProperty(media, "BSD Minor" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? NSNumber,
+              fstat(descriptor, &status) == 0, status.st_mode & S_IFMT == S_IFCHR,
+              flags >= 0, flags & O_EVTONLY == 0, flags & O_ACCMODE == (request.readOnly ? O_RDONLY : O_RDWR),
+              fcntl(descriptor, F_SETFD, FD_CLOEXEC) == 0,
+              writeflow_device_matches(status.st_rdev, major.uint32Value, minor.uint32Value) != 0 else {
+            throw HelperFailure(message: "前台授权句柄不属于原分区或访问模式不符，已停止兼容挂载。")
         }
     }
 

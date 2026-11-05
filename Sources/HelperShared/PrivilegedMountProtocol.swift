@@ -47,6 +47,7 @@ struct PrivilegedEjectRequest: Codable, Sendable {
 }
 
 @objc protocol PrivilegedMountProtocol {
+    func mountLegacy(_ request: Data, handle: FileHandle, withReply reply: @escaping @Sendable (Data?, String?) -> Void)
     func mount(_ request: Data, withReply reply: @escaping @Sendable (Data?, String?) -> Void)
     func unmount(_ token: String, handle: FileHandle, withReply reply: @escaping @Sendable (String?) -> Void)
     func prepareEject(_ request: Data, handles: [FileHandle], withReply reply: @escaping @Sendable (String?) -> Void)

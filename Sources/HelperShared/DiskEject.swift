@@ -16,7 +16,7 @@ enum HelperEjectPolicy {
     }
 
     static func validateMount(_ mount: MountedFileSystem, userID: UInt32) throws {
-        guard mount.type != "blntfs" else {
+        guard !mount.isWriteFlow else {
             throw HelperFailure(message: "同盘仍有 NTFS 畅写挂载，请先正常卸载后再弹出。")
         }
         guard mount.mountPoint.hasPrefix("/Volumes/"),

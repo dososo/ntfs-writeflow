@@ -44,6 +44,126 @@ final class HelperNamespace {
 
     deinit { close(descriptor) }
 
+    // 强持有用户目录FD及本次token目录FD；独立打开的flock租约避免重入。
+    final class UnmountLease {
+        let ticket: HelperTicket
+        private let namespace: HelperNamespace
+        private let tokenDescriptor: Int32
+
+        fileprivate init(namespace: HelperNamespace, ticket: HelperTicket) throws {
+            self.namespace = namespace
+            self.ticket = ticket
+            let folder = try namespace.tokenDirectory(ticket.token)
+            guard flock(folder, LOCK_EX | LOCK_NB) == 0 else {
+                close(folder)
+                throw HelperFailure(message: "该专用挂载已有卸载事务，已停止重复操作。")
+            }
+            tokenDescriptor = folder
+            try validate()
+        }
+
+        deinit { close(tokenDescriptor) }
+
+        func validate() throws {
+            try HelperNamespace.verifyDirectory(namespace.descriptor, permissions: 0o700)
+            try HelperNamespace.verifyACL(namespace.descriptor, allowedUser: namespace.userID)
+            try HelperNamespace.verifyDirectory(tokenDescriptor, permissions: 0o755)
+            try HelperNamespace.verifyACL(tokenDescriptor, allowedUser: nil)
+            let currentUser = open(namespace.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            guard currentUser >= 0 else { throw HelperFailure(message: "专用用户目录已变化，已停止卸载。") }
+            defer { close(currentUser) }
+            var original = stat(), current = stat(), token = stat(), entry = stat()
+            guard fstat(namespace.descriptor, &original) == 0, fstat(currentUser, &current) == 0,
+                  original.st_dev == current.st_dev, original.st_ino == current.st_ino,
+                  fstat(tokenDescriptor, &token) == 0,
+                  fstatat(namespace.descriptor, ticket.token, &entry, AT_SYMLINK_NOFOLLOW) == 0,
+                  entry.st_mode & S_IFMT == S_IFDIR, token.st_dev == entry.st_dev, token.st_ino == entry.st_ino else {
+                throw HelperFailure(message: "专用父目录不再对应保留的原目录，已停止卸载。")
+            }
+            let saved = try namespace.load(ticket.token)
+            try Self.verifyTicket(saved, expected: ticket)
+        }
+
+        static func verifyTicket(_ saved: HelperTicket, expected: HelperTicket) throws {
+            let before = expected.request, after = saved.request
+            guard saved.userID == expected.userID, saved.token == expected.token,
+                  saved.fileSystemIdentity == expected.fileSystemIdentity,
+                  before.deviceID == after.deviceID, before.mediaRegistryID == after.mediaRegistryID,
+                  before.wholeMediaRegistryID == after.wholeMediaRegistryID,
+                  before.mediaByteCount == after.mediaByteCount, before.readOnly == after.readOnly else {
+                throw HelperFailure(message: "挂载凭据已变化，已停止卸载。")
+            }
+        }
+    }
+
+    func unmountLease(for ticket: HelperTicket) throws -> UnmountLease {
+        guard ticket.userID == userID else { throw HelperFailure(message: "挂载凭据不属于当前连接用户。") }
+        return try UnmountLease(namespace: self, ticket: ticket)
+    }
+
+    func runtimeDirectory(for ticket: HelperTicket) throws -> Int32 {
+        guard ticket.userID == userID else { throw HelperFailure(message: "运行时凭据不属于当前连接用户。") }
+        try UnmountLease.verifyTicket(load(ticket.token), expected: ticket)
+        let folder = try tokenDirectory(ticket.token)
+        defer { close(folder) }
+        return try Self.directory(parent: folder, name: "runtime", permissions: 0o700)
+    }
+
+    func mediaLease(for request: PrivilegedMountRequest) throws -> FileHandle {
+        guard geteuid() == 0 else { throw HelperFailure(message: "媒体租约需要管理员服务。") }
+        let name = try Self.mediaLockName(for: request)
+        let base = openat(descriptor, "..", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard base >= 0 else { throw HelperFailure(message: "无法打开受保护媒体租约父目录。") }
+        defer { close(base) }
+        try Self.verifyDirectory(base, permissions: 0o755)
+        try Self.verifyACL(base, allowedUser: nil)
+        var path = [CChar](repeating: 0, count: Int(PATH_MAX))
+        guard fcntl(base, F_GETPATH, &path) == 0,
+              String(decoding: path.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self) == PrivilegedMountConfiguration.namespace else {
+            throw HelperFailure(message: "媒体租约父目录不再属于固定系统命名空间。")
+        }
+        let folder = try Self.directory(parent: base, name: "media-leases", permissions: 0o700)
+        defer { close(folder) }
+        var file = openat(folder, name, O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        let created = file >= 0
+        if file < 0 && errno == EEXIST { file = openat(folder, name, O_RDWR | O_NOFOLLOW | O_CLOEXEC) }
+        guard file >= 0 else { throw HelperFailure(message: "无法打开固定媒体租约文件。") }
+        do {
+            if created {
+                guard fchmod(file, 0o600) == 0 else { throw HelperFailure(message: "无法设置媒体租约权限。") }
+                try Self.setACL(file, allowedUser: nil)
+            }
+            let original = try Self.fileStatus(file)
+            try Self.verifyMediaLockMetadata(original)
+            try Self.verifyACL(file, allowedUser: nil)
+            var entry = stat()
+            guard fstatat(folder, name, &entry, AT_SYMLINK_NOFOLLOW) == 0,
+                  entry.st_dev == original.st_dev, entry.st_ino == original.st_ino else {
+                throw HelperFailure(message: "媒体租约文件身份已变化。")
+            }
+            guard flock(file, LOCK_EX | LOCK_NB) == 0 else {
+                throw HelperFailure(message: "同一介质仍由现存后端持有，拒绝重复启动写入。")
+            }
+            // 不删除或截断锁文件，防止新inode绕过仍由子进程持有的锁。
+            return FileHandle(fileDescriptor: file, closeOnDealloc: true)
+        } catch { close(file); throw error }
+    }
+
+    static func mediaLockName(for request: PrivilegedMountRequest) throws -> String {
+        guard request.mediaRegistryID > 0, request.wholeMediaRegistryID > 0,
+              request.mediaByteCount > 0, VolumeRecord.validDeviceID(request.deviceID) else {
+            throw HelperFailure(message: "媒体租约请求无效。")
+        }
+        return "\(request.wholeMediaRegistryID).lock"
+    }
+
+    static func verifyMediaLockMetadata(_ status: stat) throws {
+        guard status.st_uid == 0, status.st_mode & S_IFMT == S_IFREG,
+              status.st_mode & 0o7777 == 0o600, status.st_nlink == 1 else {
+            throw HelperFailure(message: "媒体租约必须为root单链接0600普通文件。")
+        }
+    }
+
     func create(_ request: PrivilegedMountRequest) throws -> HelperTicket {
         let ticket = HelperTicket(userID: userID, token: UUID().uuidString, request: request)
         let folder = try tokenDirectory(ticket.token, create: true)
@@ -109,12 +229,76 @@ final class HelperNamespace {
         }
         let folder = try tokenDirectory(token)
         defer { close(folder) }
+        try Self.removeRuntime(parent: folder)
         // 仅删除本次凭据与明确的空目录，不递归、不进入卷内容。
         guard unlinkat(folder, "volume", AT_REMOVEDIR) == 0,
               unlinkat(folder, "ticket.json", 0) == 0,
               unlinkat(descriptor, token, AT_REMOVEDIR) == 0 else {
             throw HelperFailure(message: "卷已卸载，但空目录或凭据清理未完成。")
         }
+    }
+
+    // 先完整核验已知缓存；未知条目或异常权限均保留挂载凭据。
+    static func removeRuntime(parent: Int32, inspect: (Int32) throws -> stat = fileStatus) throws {
+        let runtime = openat(parent, "runtime", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard runtime >= 0 else {
+            if errno == ENOENT { return }
+            throw HelperFailure(message: "无法核验专用运行时目录，保留挂载凭据。")
+        }
+        defer { close(runtime) }
+        try verifyDirectoryStatus(inspect(runtime), permissions: 0o700)
+        try verifyACL(runtime, allowedUser: nil)
+        let entries = try directoryEntries(runtime)
+        guard entries.isSubset(of: ["libfuse.2.dylib", "NTFSWriteFlowLegacy"]) else {
+            throw HelperFailure(message: "运行时目录包含未知条目，保留挂载凭据。")
+        }
+        var files: [Int32] = []
+        defer { for file in files { close(file) } }
+        for name in entries.sorted() {
+            let file = openat(runtime, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+            guard file >= 0 else { throw HelperFailure(message: "无法核验运行时缓存文件，保留挂载凭据。") }
+            files.append(file)
+            let status = try inspect(file)
+            guard status.st_uid == 0, status.st_mode & S_IFMT == S_IFREG, status.st_nlink == 1,
+                  [mode_t(0o500), mode_t(0o600)].contains(status.st_mode & 0o7777) else {
+                throw HelperFailure(message: "运行时缓存文件权限或链接数异常，保留挂载凭据。")
+            }
+            try verifyACL(file, allowedUser: nil)
+        }
+        // 两个固定文件全部核验成功后才删除，异常时不先损失另一缓存。
+        for name in entries.sorted() {
+            guard unlinkat(runtime, name, 0) == 0 else {
+                throw HelperFailure(message: "运行时缓存文件未清理，保留挂载凭据。")
+            }
+        }
+        guard unlinkat(parent, "runtime", AT_REMOVEDIR) == 0 else {
+            throw HelperFailure(message: "运行时目录未清空，保留挂载凭据。")
+        }
+    }
+
+    private static func fileStatus(_ descriptor: Int32) throws -> stat {
+        var status = stat()
+        guard fstat(descriptor, &status) == 0 else { throw HelperFailure(message: "无法读取缓存元数据，保留挂载凭据。") }
+        return status
+    }
+
+    private static func directoryEntries(_ descriptor: Int32) throws -> Set<String> {
+        let copy = fcntl(descriptor, F_DUPFD_CLOEXEC, 0)
+        guard copy >= 0 else { throw HelperFailure(message: "无法读取缓存目录，保留挂载凭据。") }
+        guard let directory = fdopendir(copy) else {
+            close(copy)
+            throw HelperFailure(message: "无法读取缓存目录，保留挂载凭据。")
+        }
+        defer { closedir(directory) }
+        var names: Set<String> = []
+        errno = 0
+        while let entry = readdir(directory) {
+            var field = entry.pointee.d_name
+            let name = withUnsafeBytes(of: &field) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+            if name != "." && name != ".." { names.insert(name) }
+        }
+        guard errno == 0 else { throw HelperFailure(message: "缓存目录读取不完整，保留挂载凭据。") }
+        return names
     }
 
     private func tokenDirectory(_ token: String, create: Bool = false) throws -> Int32 {
@@ -149,9 +333,15 @@ final class HelperNamespace {
 
     private static func verifyDirectory(_ descriptor: Int32, permissions: mode_t?) throws {
         var status = stat()
-        guard fstat(descriptor, &status) == 0, status.st_uid == 0,
-              status.st_mode & S_IFMT == S_IFDIR, status.st_mode & 0o022 == 0,
-              permissions == nil || status.st_mode & 0o777 == permissions else {
+        guard fstat(descriptor, &status) == 0 else {
+            throw HelperFailure(message: "目录必须由系统拥有，且不可由其他用户替换。")
+        }
+        try verifyDirectoryStatus(status, permissions: permissions)
+    }
+
+    static func verifyDirectoryStatus(_ status: stat, permissions: mode_t?) throws {
+        guard status.st_uid == 0, status.st_mode & S_IFMT == S_IFDIR, status.st_mode & 0o022 == 0,
+              permissions == nil || status.st_mode & 0o7777 == permissions else {
             throw HelperFailure(message: "目录必须由系统拥有，且不可由其他用户替换。")
         }
     }

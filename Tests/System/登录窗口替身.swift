@@ -1,9 +1,10 @@
 import SwiftUI
 import AppKit
 import Foundation
+import Combine
 
 // 只替换依赖；@main App、Window场景与WorkbenchDelegate来自原字节生产文件。
-@MainActor final class AppModel {
+@MainActor final class AppModel: ObservableObject {
     let isBusy = false
     init() { WindowLifecycleProbe.configure() }
     func startAutomaticSessionMonitoring() { WindowLifecycleProbe.shared.record("early-session-monitor") }
@@ -41,6 +42,7 @@ import Foundation
     private var windows: [String: WeakWindow] = [:]
     var openDiagnostics: (() -> Void)?
     var openSettings: (() -> Void)?
+    var legacyWindows: WorkbenchLegacyWindows?
 
     static func configure() {
         guard shared == nil else { return }
@@ -89,7 +91,7 @@ import Foundation
     func mark(_ role: String, window: NSWindow) { windows[role] = WeakWindow(window) }
     private func windowState() -> [[String: Any]] {
         NSApp.windows.map { window in
-            ["number": window.windowNumber, "title": window.title, "class": String(describing: type(of: window)),
+            ["number": window.windowNumber, "instance": String(describing: ObjectIdentifier(window)), "title": window.title, "class": String(describing: type(of: window)),
              "role": windows.first(where: { $0.value.value === window })?.key as Any? ?? NSNull(),
              "visible": window.isVisible, "miniaturized": window.isMiniaturized,
              "titled": window.styleMask.contains(.titled)]
@@ -106,7 +108,7 @@ import Foundation
         if let signature = try? JSONSerialization.data(withJSONObject: state, options: [.sortedKeys]), signature != observedSignature {
             observedSignature = signature; record("window-transition", ["windows": state])
         }
-        if Date().timeIntervalSince(started) > 60 {
+        if Date().timeIntervalSince(started) > 300 {
             record("watchdog-expired"); timer?.invalidate(); NSApp.terminate(nil); return
         }
         let path = root.appendingPathComponent("指令.json")
@@ -149,27 +151,46 @@ private struct RoleMarker: NSViewRepresentable {
 }
 
 struct ContentView: View {
-    let model: AppModel
+    @ObservedObject var model: AppModel
     @Environment(\.openWindow) private var openWindow
-    @Environment(\.openSettings) private var openSettings
     var body: some View {
         Text("独立窗口生命周期验收：没有磁盘服务")
             .background(RoleMarker(role: "main"))
+            .background {
+                if #available(macOS 15.0, *), WindowLifecycleProbe.shared.legacyWindows == nil { ProbeSettingsOpener() }
+            }
             .onAppear {
-                WindowLifecycleProbe.shared.openDiagnostics = { openWindow(id: "diagnostics") }
-                WindowLifecycleProbe.shared.openSettings = { openSettings() }
+                if let legacy = WindowLifecycleProbe.shared.legacyWindows {
+                    WindowLifecycleProbe.shared.openDiagnostics = { legacy.show("diagnostics", model: model) }
+                    WindowLifecycleProbe.shared.openSettings = { legacy.show("settings", model: model) }
+                } else {
+                    WindowLifecycleProbe.shared.openDiagnostics = {
+                        WorkbenchUICompatibility.open("diagnostics", model: model, using: openWindow)
+                    }
+                    if #unavailable(macOS 15.0) {
+                        WindowLifecycleProbe.shared.openSettings = { WorkbenchUICompatibility.showLegacySettings(model: model) }
+                    }
+                }
             }
     }
 }
+@available(macOS 15.0, *) private struct ProbeSettingsOpener: View {
+    @Environment(\.openSettings) private var openSettings
+    var body: some View {
+        Color.clear.frame(width: 0, height: 0).onAppear {
+            WindowLifecycleProbe.shared.openSettings = { openSettings() }
+        }
+    }
+}
 struct DiagnosticsView: View {
-    let model: AppModel
+    @ObservedObject var model: AppModel
     var body: some View { Text("独立诊断窗口").background(RoleMarker(role: "diagnostics")) }
 }
 struct WorkbenchSettingsView: View {
-    let model: AppModel
+    @ObservedObject var model: AppModel
     var body: some View { Text("独立设置窗口").frame(width: 400, height: 250).background(RoleMarker(role: "settings")) }
 }
 struct WorkbenchMenu: View {
-    let model: AppModel
+    @ObservedObject var model: AppModel
     var body: some View { Text("独立验收菜单，无磁盘操作") }
 }

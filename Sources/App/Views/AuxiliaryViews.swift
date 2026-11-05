@@ -1,18 +1,18 @@
 import SwiftUI
 
 struct DiagnosticsView: View {
-    let model: AppModel
+    @ObservedObject var model: AppModel
 
     var body: some View {
         Form {
-            Section("扩展状态") {
+            Section("文件系统运行状态") {
                 LabeledContent("系统报告", value: model.extensionDiagnostic.title)
                 Text(model.extensionDiagnostic.detail).foregroundStyle(.secondary)
             }
             Section("当前验证范围") {
                 Label("磁盘列表来自本机系统", systemImage: "externaldrive")
                 Label("预览版：验证结果仅适用于报告中的版本与设备", systemImage: "info.circle")
-                Text("当前使用 FSKit 与 NTFS-3G，支持 Apple Silicon、macOS 26 及以上。Windows 独立读写、异常断电、Intel 和旧系统尚未完成验收；重要数据请先备份。格式化和完整修复尚未提供。")
+                Text("通用包包含 Intel 与 Apple Silicon，最低 macOS 13。15.4 及以上使用 FSKit，13～15.3 需要自行安装并批准 macFUSE。当前引擎：\(StorageBackend.current.title)。旧系统与 Intel 硬件完整链、Windows 复读和异常断电仍待验收；重要数据请先备份。格式化和完整修复尚未提供。")
                     .foregroundStyle(.secondary)
             }
             Section("本地诊断") {
@@ -30,7 +30,7 @@ struct DiagnosticsView: View {
 }
 
 struct WorkbenchSettingsView: View {
-    @Bindable var model: AppModel
+    @ObservedObject var model: AppModel
     @AppStorage("showMenuBar") private var showMenuBar = true
 
     var body: some View {
@@ -80,7 +80,7 @@ struct WorkbenchSettingsView: View {
 }
 
 struct WorkbenchMenu: View {
-    let model: AppModel
+    @ObservedObject var model: AppModel
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -102,20 +102,18 @@ struct WorkbenchMenu: View {
         }
         Divider()
         Button("打开主窗口") {
-            NSApp.setActivationPolicy(.regular)
-            NSApp.unhide(nil)
-            openWindow(id: "main")
-            NSApp.activate()
+            WorkbenchUICompatibility.open("main", model: model, using: openWindow)
             model.requestAutomaticForegroundConfirmation()
         }
         Button("刷新磁盘") { Task { await model.refresh() } }.disabled(model.isBusy)
         Button("诊断") {
-            NSApp.setActivationPolicy(.regular)
-            NSApp.unhide(nil)
-            openWindow(id: "diagnostics")
-            NSApp.activate()
+            WorkbenchUICompatibility.open("diagnostics", model: model, using: openWindow)
         }
-        SettingsLink { Text("设置…") }
+        if #available(macOS 15.0, *) {
+            SettingsLink { Text("设置…") }
+        } else {
+            Button("设置…") { WorkbenchUICompatibility.showLegacySettings(model: model) }
+        }
         Divider()
         Button("退出 NTFS 畅写") { NSApp.terminate(nil) }
     }

@@ -197,8 +197,13 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
     }
 
     // FSKit retains unlinked/overwritten open files until their last reference closes.
+    private var openUnlinkEmulationEnabled: Bool = true
+
     @available(macOS 26.0, *)
-    var enableOpenUnlinkEmulation: Bool = true
+    var enableOpenUnlinkEmulation: Bool {
+        get { openUnlinkEmulationEnabled }
+        set { openUnlinkEmulationEnabled = newValue }
+    }
 
     @available(macOS 26.4, *)
     var requestedMountOptions: FSVolume.MountOptions {

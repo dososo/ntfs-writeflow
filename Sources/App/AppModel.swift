@@ -1,69 +1,69 @@
 import AppKit
-import Observation
+import Combine
 import ServiceManagement
 
-@MainActor @Observable final class AppModel {
-    var records: [VolumeRecord] = []
-    var selectedID: String? {
+@MainActor final class AppModel: ObservableObject {
+    @Published var records: [VolumeRecord] = []
+    @Published var selectedID: String? {
         didSet { if oldValue != selectedID { operationMessage = nil } }
     }
-    var isRefreshing = false
-    var isOperating = false {
+    @Published var isRefreshing = false
+    @Published var isOperating = false {
         didSet {
             if oldValue && !isOperating && !autoPending.isEmpty {
                 Task { await drainAutomaticWork() }
             }
         }
     }
-    var inventoryIsCurrent = false
-    var lastRefresh: Date?
-    var unreadableCount = 0
-    var errorMessage: String?
-    var operationMessage: String?
-    var extensionDiagnostic = ExtensionDiagnostic.pending
-    var mountHelperStatus = "尚未查询"
-    var mountHelperNeedsApproval = false
-    var mountHelperEnabled = false
-    var showOtherVolumes = UserDefaults.standard.bool(forKey: "showOtherVolumes") {
+    @Published var inventoryIsCurrent = false
+    @Published var lastRefresh: Date?
+    @Published var unreadableCount = 0
+    @Published var errorMessage: String?
+    @Published var operationMessage: String?
+    @Published var extensionDiagnostic = ExtensionDiagnostic.pending
+    @Published var mountHelperStatus = "尚未查询"
+    @Published var mountHelperNeedsApproval = false
+    @Published var mountHelperEnabled = false
+    @Published var showOtherVolumes = UserDefaults.standard.bool(forKey: "showOtherVolumes") {
         didSet { UserDefaults.standard.set(showOtherVolumes, forKey: "showOtherVolumes"); normalizeSelection() }
     }
-    var automaticRefresh = UserDefaults.standard.object(forKey: "automaticRefresh") as? Bool ?? true {
+    @Published var automaticRefresh = UserDefaults.standard.object(forKey: "automaticRefresh") as? Bool ?? true {
         didSet { UserDefaults.standard.set(automaticRefresh, forKey: "automaticRefresh") }
     }
     let disks = DiskService()
-    @ObservationIgnored let autoDefaults: UserDefaults
-    @ObservationIgnored let autoPolicyStore: AutoMountPolicyStore
-    @ObservationIgnored let autoCoordinator: AutoMountCoordinator
-    @ObservationIgnored var autoRuntime: AutoMountRuntime?
-    @ObservationIgnored var diskMonitor: DiskEventMonitor?
-    @ObservationIgnored var autoGenerations: [UInt64: UInt64] = [:]
-    @ObservationIgnored var autoNative: [UInt64: DiskEventSnapshot] = [:]
-    @ObservationIgnored var autoCanonical: [UInt64: AutoMountFingerprint] = [:]
-    @ObservationIgnored var autoPending: [UInt64: AutoMountCandidate] = [:]
-    @ObservationIgnored var generationCounter: UInt64 = 0
-    @ObservationIgnored var autoMonitorEpoch: UInt64 = 0
-    @ObservationIgnored var autoPolicyEpoch: UInt64 = 0
-    @ObservationIgnored var autoSuppressedMedia: Set<UInt64> = []
-    @ObservationIgnored var autoSuppressedWholeMedia: Set<UInt64> = []
-    @ObservationIgnored private var disappearedMediaIDs: Set<UInt64> = []
-    @ObservationIgnored var autoEnvironmentQueryID: UInt64 = 0
-    @ObservationIgnored var autoSessionMonitor: AutoMountSessionMonitor?
-    @ObservationIgnored var autoSessionMonitorEpoch: UInt64 = 0
-    @ObservationIgnored var autoSessionRevocationEpoch: UInt64 = 0
-    @ObservationIgnored var autoForegroundRequest: (epoch: UInt64, deadline: TimeInterval)?
-    @ObservationIgnored let verificationProcessID = UUID().uuidString
-    @ObservationIgnored var verificationRequestID: String?
-    @ObservationIgnored var verificationSequence = 0
-    @ObservationIgnored var verificationBinarySHA: String?
-    var autoIsOperating = false
-    var autoStatus = "自动挂载已关闭。"
-    var loginState = LoginLaunchState.pending
+    let autoDefaults: UserDefaults
+    let autoPolicyStore: AutoMountPolicyStore
+    let autoCoordinator: AutoMountCoordinator
+    var autoRuntime: AutoMountRuntime?
+    var diskMonitor: DiskEventMonitor?
+    var autoGenerations: [UInt64: UInt64] = [:]
+    var autoNative: [UInt64: DiskEventSnapshot] = [:]
+    var autoCanonical: [UInt64: AutoMountFingerprint] = [:]
+    var autoPending: [UInt64: AutoMountCandidate] = [:]
+    var generationCounter: UInt64 = 0
+    var autoMonitorEpoch: UInt64 = 0
+    var autoPolicyEpoch: UInt64 = 0
+    var autoSuppressedMedia: Set<UInt64> = []
+    var autoSuppressedWholeMedia: Set<UInt64> = []
+    private var disappearedMediaIDs: Set<UInt64> = []
+    var autoEnvironmentQueryID: UInt64 = 0
+    var autoSessionMonitor: AutoMountSessionMonitor?
+    var autoSessionMonitorEpoch: UInt64 = 0
+    var autoSessionRevocationEpoch: UInt64 = 0
+    var autoForegroundRequest: (epoch: UInt64, deadline: TimeInterval)?
+    let verificationProcessID = UUID().uuidString
+    var verificationRequestID: String?
+    var verificationSequence = 0
+    var verificationBinarySHA: String?
+    @Published var autoIsOperating = false
+    @Published var autoStatus = "自动挂载已关闭。"
+    @Published var loginState = LoginLaunchState.pending
     var loginEnabled: Bool { loginState.isEnabled }
     var loginStatus: String { loginState.title }
-    @ObservationIgnored var loginRegistrationRequired = false
-    var autoEnvironment = AutoMountEnvironment(isClear: false, reason: "尚未核对驱动竞争状态。")
-    var autoSession = AutoMountSessionState()
-    var autoEnabled = false {
+    var loginRegistrationRequired = false
+    @Published var autoEnvironment = AutoMountEnvironment(isClear: false, reason: "尚未核对驱动竞争状态。")
+    @Published var autoSession = AutoMountSessionState()
+    @Published var autoEnabled = false {
         didSet {
             autoEnvironmentQueryID &+= 1
             if oldValue != autoEnabled {
@@ -86,8 +86,8 @@ import ServiceManagement
         autoCoordinator = AutoMountCoordinator(store: store)
         autoEnabled = defaults.bool(forKey: "writeflow.autoMount.enabled")
     }
-    private var isQueryingExtension = false
-    private var ejectedMedia = EjectedMediaSession()
+    @Published private var isQueryingExtension = false
+    @Published private var ejectedMedia = EjectedMediaSession()
 
     var volumes: [VolumeRecord] { VolumeRecord.visible(records.filter { !ejectedMedia.contains($0) }, includeOtherVolumes: showOtherVolumes) }
     var ntfsVolumes: [VolumeRecord] { VolumeRecord.visible(records.filter { !ejectedMedia.contains($0) }, includeOtherVolumes: false) }
@@ -217,7 +217,7 @@ import ServiceManagement
         recordSessionVerification("请求挂载")
         guard !isBusy, inventoryIsCurrent, !ejectedMedia.contains(volume) else { return }
         guard extensionDiagnostic.isEnabled else {
-            errorMessage = "请先在系统设置 → 通用 → 登录项与扩展 → 按类别 → 文件系统扩展中启用 NTFSFileSystem。"
+            errorMessage = StorageBackend.current == .macFUSE ? extensionDiagnostic.detail : "请先在系统设置 → 通用 → 登录项与扩展 → 按类别 → 文件系统扩展中启用 NTFSFileSystem。"
             return
         }
         guard autoCoordinator.beginManualOperation() else { return }
@@ -265,7 +265,7 @@ import ServiceManagement
         let text = """
         NTFS 畅写 · NTFS WriteFlow
         版本：\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "未知")（\(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "未知")）预览版
-        读写引擎：NTFS-3G（FSKit 适配）
+        读写引擎：NTFS-3G（\(StorageBackend.current.title)）
         生成时间：\(Date().formatted())
         系统：\(ProcessInfo.processInfo.operatingSystemVersionString)
         扩展状态：\(extensionDiagnostic.title)

@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct ContentView: View {
-    @Bindable var model: AppModel
+    @ObservedObject var model: AppModel
     @Environment(\.openWindow) private var openWindow
     @State private var ejectTarget: VolumeRecord?
 
@@ -53,21 +53,14 @@ struct ContentView: View {
                         autoStatus: model.autoStatus,
                         setAutoMode: { model.setAutoMode($0, volume: volume) })
                 } else {
-                    ContentUnavailableView {
-                        Label(model.showOtherVolumes ? "尚未发现可显示的卷" : "尚未发现 NTFS 磁盘", systemImage: "externaldrive.badge.questionmark")
-                    } description: {
-                        Text(model.showOtherVolumes ? "连接磁盘后刷新，查看系统报告的卷状态。" : "连接 NTFS 格式的磁盘，或打开左下角选项查看其他文件系统。")
-                    } actions: {
-                        Button("刷新磁盘") { Task { await model.refresh() } }.disabled(model.isBusy)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    emptyState.frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 Divider()
                 HStack(spacing: 8) {
                     Image(systemName: "wrench.and.screwdriver").foregroundStyle(.secondary)
                     Text("开发验证版 · 系统镜像读写已验证，完整发布验收进行中")
                     Spacer()
-                    Button("查看诊断") { openWindow(id: "diagnostics") }.buttonStyle(.link)
+                    Button("查看诊断") { WorkbenchUICompatibility.open("diagnostics", model: model, using: openWindow) }.buttonStyle(.link)
                 }
                 .font(.caption).foregroundStyle(.secondary).padding(14)
             }
@@ -92,6 +85,25 @@ struct ContentView: View {
             } message: { target in
                 Text("将弹出“\(target.name)”所在的整块磁盘及其所有分卷。请先保存正在编辑的文件。")
             }
+    }
+
+    @ViewBuilder private var emptyState: some View {
+        let title = model.showOtherVolumes ? "尚未发现可显示的卷" : "尚未发现 NTFS 磁盘"
+        let detail = model.showOtherVolumes ? "连接磁盘后刷新，查看系统报告的卷状态。" : "连接 NTFS 格式的磁盘，或打开左下角选项查看其他文件系统。"
+        if #available(macOS 14.0, *) {
+            ContentUnavailableView {
+                Label(title, systemImage: "externaldrive.badge.questionmark")
+            } description: { Text(detail) } actions: {
+                Button("刷新磁盘") { Task { await model.refresh() } }.disabled(model.isBusy)
+            }
+        } else {
+            VStack(spacing: 12) {
+                Image(systemName: "externaldrive.badge.questionmark").font(.system(size: 42)).foregroundStyle(.secondary)
+                Text(title).font(.title2.bold())
+                Text(detail).foregroundStyle(.secondary)
+                Button("刷新磁盘") { Task { await model.refresh() } }.disabled(model.isBusy)
+            }.multilineTextAlignment(.center).padding(28)
+        }
     }
 
     private func message(_ text: String, symbol: String, color: Color) -> some View {

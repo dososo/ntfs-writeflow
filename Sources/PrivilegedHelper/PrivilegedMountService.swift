@@ -5,11 +5,17 @@ final class PrivilegedMountEngine: @unchecked Sendable {
     // 所有连接共用串行队列，避免同一凭据上的挂载、回读与卸载并行。
     let queue = DispatchQueue(label: "com.blteam.ntfsworkbench.mount-helper.operations")
 
+    private var legacyProcesses: [String: LegacyMountProcess] = [:]
+
     func mount(_ data: Data, userID: UInt32) throws -> Data {
+        guard StorageBackend.current == .fsKit else {
+            throw HelperFailure(message: "当前系统需要前台授权设备句柄的兼容挂载流程。")
+        }
         guard data.count <= 4096 else { throw HelperFailure(message: "挂载请求过大。") }
         let request = try JSONDecoder().decode(PrivilegedMountRequest.self, from: data)
         let media = try HelperMedia(request)
-        guard media.volume.mountPoint == nil, request.readOnly || media.volume.writableMedia == true else {
+        guard media.volume.mountPoint == nil, try MountedFileSystemReader.deviceMounts(request.deviceID).isEmpty,
+              request.readOnly || media.volume.writableMedia == true else {
             throw HelperFailure(message: "介质已由其他工具挂载或未确认可写，不会自动接管。")
         }
         let namespace = try HelperNamespace(userID: userID)
@@ -34,23 +40,72 @@ final class PrivilegedMountEngine: @unchecked Sendable {
         }
     }
 
+    func mountLegacy(_ data: Data, handle: FileHandle, userID: UInt32) throws -> Data {
+        guard StorageBackend.current == .macFUSE, data.count <= 4096 else {
+            throw HelperFailure(message: "此系统或请求不适用旧后端挂载。")
+        }
+        legacyProcesses = legacyProcesses.filter { $0.value.process.isRunning }
+        let request = try JSONDecoder().decode(PrivilegedMountRequest.self, from: data)
+        let media = try HelperMedia(request)
+        guard media.volume.mountPoint == nil, try MountedFileSystemReader.deviceMounts(request.deviceID).isEmpty,
+              request.readOnly || media.volume.writableMedia == true,
+              !legacyProcesses.values.contains(where: { $0.mediaRegistryID == request.mediaRegistryID }) else {
+            throw HelperFailure(message: "介质已有挂载或尚在处理，不会重复开启写后端。")
+        }
+        try media.validateHandle(handle, request: request)
+        let namespace = try HelperNamespace(userID: userID)
+        var ticket = try namespace.create(request)
+        let path = try namespace.mountPoint(ticket.token)
+        do {
+            let child = try LegacyMountProcess(request, userID: userID, ticket: ticket, namespace: namespace, handle: handle)
+            legacyProcesses[ticket.token] = child
+            let mounted = try LegacyMountProcess.waitForMount(request, path: path,
+                mounted: { MountedFileSystemReader.read(path: path) }, running: { child.process.isRunning },
+                status: { child.process.terminationStatus }, validate: { try media.validate(request) })
+            ticket.fileSystemIdentity = mounted.identity
+            try namespace.save(ticket)
+            return try JSONEncoder().encode(result(ticket, path: path, mounted: mounted))
+        } catch {
+            if legacyProcesses[ticket.token]?.process.isRunning != true, MountedFileSystemReader.read(path: path) == nil {
+                legacyProcesses.removeValue(forKey: ticket.token)
+                try? namespace.discardUnmounted(ticket.token)
+            }
+            throw error
+        }
+    }
+
     func unmount(_ token: String, handle: FileHandle, userID: UInt32) throws {
         let namespace = try HelperNamespace(userID: userID)
-        let ticket = try namespace.load(token)
+        var ticket = try namespace.load(token)
         let before = try verifiedMount(ticket, namespace: namespace)
+        if #unavailable(macOS 26.0), ticket.fileSystemIdentity == nil {
+            ticket.fileSystemIdentity = before.identity
+            try namespace.save(ticket)
+        }
         let path = try namespace.mountPoint(token)
         let descriptor = handle.fileDescriptor
         try Self.validateUnmountDescriptor(descriptor, expected: before)
-        guard fsync(descriptor) == 0 else {
-            throw HelperFailure(message: "同步未完成（\(errno)），保留挂载，请勿断开磁盘。")
-        }
-        guard funmount(descriptor, 0) == 0 else {
-            throw HelperFailure(message: "卷未卸载（\(errno)），请关闭占用程序后重试；不会强制卸载。")
-        }
+        let lease: HelperNamespace.UnmountLease?
+        if #available(macOS 26.0, *) { lease = nil }
+        else { lease = try namespace.unmountLease(for: ticket) }
+        try ManagedUnmount.synchronizeAndUnmount(descriptor: descriptor, expected: before, legacyLease: lease,
+            validateMedia: { try HelperMedia(ticket.request).validate(ticket.request) })
         guard MountedFileSystemReader.read(path: path)?.identity != before.identity else {
             throw HelperFailure(message: "系统仍报告原挂载实例，未确认卸载完成。")
         }
+        var closeLease: FileHandle?
+        defer { try? closeLease?.close() }
+        if before.type == "macfuse" {
+            let child = legacyProcesses[token]?.process
+            closeLease = try LegacyMountProcess.waitForClose(ticket,
+                lease: { try namespace.mediaLease(for: ticket.request) }, running: { child?.isRunning ?? false },
+                exitStatus: {
+                    guard let child, !child.isRunning else { return nil }
+                    return child.terminationReason == .exit ? child.terminationStatus : -1
+                })
+        }
         try namespace.discardUnmounted(token)
+        legacyProcesses.removeValue(forKey: token)
     }
 
     static func validateUnmountDescriptor(_ descriptor: Int32, expected: MountedFileSystem) throws {
@@ -86,6 +141,17 @@ final class PrivilegedMountEngine: @unchecked Sendable {
     func prepareEject(_ data: Data, handles: [FileHandle], userID: UInt32) throws {
         guard data.count <= 4096, handles.count <= 64 else { throw HelperFailure(message: "弹出请求过大。") }
         let request = try JSONDecoder().decode(PrivilegedEjectRequest.self, from: data)
+        var closeLease: FileHandle?
+        defer { try? closeLease?.close() }
+        if StorageBackend.current == .macFUSE {
+            let namespace = try HelperNamespace(userID: userID)
+            let media = PrivilegedMountRequest(deviceID: request.deviceID, mediaRegistryID: request.mediaRegistryID,
+                wholeMediaRegistryID: request.wholeMediaRegistryID, mediaByteCount: request.mediaByteCount, readOnly: true)
+            closeLease = try namespace.mediaLease(for: media)
+            if let receipt = try LegacyReceipt.read(from: closeLease!.fileDescriptor) {
+                try receipt.requireClean(wholeMediaRegistryID: request.wholeMediaRegistryID)
+            }
+        }
         try HelperEject(request: request, userID: userID).prepare(handles: handles)
     }
 
@@ -99,8 +165,8 @@ final class PrivilegedMountEngine: @unchecked Sendable {
         let media = try HelperMedia(ticket.request)
         try media.validate(ticket.request)
         let path = try namespace.mountPoint(ticket.token)
-        guard media.volume.mountPoint == path,
-              let mounted = MountedFileSystemReader.read(path: path),
+        guard let mounted = MountedFileSystemReader.read(path: path),
+              media.volume.mountPoint == path,
               Self.matchesOwnedMount(ticket, path: path, mounted: mounted) else {
             throw HelperFailure(message: "未确认助手拥有的预期介质、挂载实例及访问模式。")
         }
@@ -109,7 +175,7 @@ final class PrivilegedMountEngine: @unchecked Sendable {
 
     static func matchesOwnedMount(_ ticket: HelperTicket, path: String, mounted: MountedFileSystem) -> Bool {
         // 模式不符的失败挂载仍需可查询、同步和正常卸载，模式只决定 mount 的成功回包。
-        mounted.type == "blntfs" && mounted.source == "/dev/\(ticket.request.deviceID)"
+        mounted.isWriteFlow && mounted.source == "/dev/\(ticket.request.deviceID)"
             && mounted.ownerID == 0 && mounted.mountPoint == path
             && (ticket.fileSystemIdentity == nil || ticket.fileSystemIdentity == mounted.identity)
     }
@@ -133,6 +199,14 @@ private final class PrivilegedMountEndpoint: NSObject, PrivilegedMountProtocol, 
     func mount(_ request: Data, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
         engine.queue.async {
             do { reply(try self.engine.mount(request, userID: self.userID), nil) }
+            catch { reply(nil, error.localizedDescription) }
+        }
+    }
+
+    func mountLegacy(_ request: Data, handle: FileHandle, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
+        engine.queue.async {
+            defer { try? handle.close() }
+            do { reply(try self.engine.mountLegacy(request, handle: handle, userID: self.userID), nil) }
             catch { reply(nil, error.localizedDescription) }
         }
     }

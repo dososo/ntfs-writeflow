@@ -31,12 +31,12 @@ def collect():
     files = {}
     exact = ["LICENSE", "project.yml", ".gitmodules", ".gitignore", "README.md", "README.en.md", "第三方组件说明.md",
              "Configuration/App-Info.plist", "Configuration/App-Bridging-Header.h", "Configuration/FileSystem-Info.plist",
-             "Configuration/FileSystem.entitlements", "Configuration/FileSystem-Bridging-Header.h",
+             "Configuration/FileSystem.entitlements", "Configuration/Legacy.entitlements", "Configuration/FileSystem-Bridging-Header.h",
              "Configuration/com.blteam.ntfsworkbench.mount-helper.plist",
              "设计/NTFS畅写图标原稿.png"]
     for name in exact:
         files[name] = ROOT / name
-    for folder in ["Sources", "Tests", "script", "发布", "assets", "ThirdParty/NTFSBridge", "ThirdParty/FSKitAdapter"]:
+    for folder in ["Sources", "Tests", "script", "发布", "assets", "ThirdParty/NTFSBridge", "ThirdParty/FSKitAdapter", "ThirdParty/MacFUSEHeaders"]:
         for path in (ROOT / folder).rglob("*"):
             relative = path.relative_to(ROOT)
             if any(part.endswith(".dSYM") or part in {"__pycache__", "产物", "结果", ".build", ".git", ".DS_Store"} for part in relative.parts):
@@ -48,7 +48,7 @@ def collect():
             # 历史机器结果不随开源源码分发。
             if path.name in {"验证结果.txt", ".gitignore", "backend_safety"}:
                 continue
-            if path.suffix not in SOURCE_SUFFIXES and path.name != "LICENSE":
+            if path.suffix not in SOURCE_SUFFIXES and path.name not in {"LICENSE", "COPYING", "COPYING.LIB"}:
                 raise SystemExit(f"未登记的文件类型，停止打包：{relative}")
             files[str(relative)] = path
     # 根目录中英首页均为公开说明；与资源一起扫描并保留相对链接。

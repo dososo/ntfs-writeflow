@@ -6,7 +6,12 @@ struct AutoMountEnvironment: Sendable {
     let isClear: Bool
     let reason: String
 
-    static func classify(filesystems: [String], extensions: [String], loaded: [String], modules: [String]) -> Self {
+    static func classify(filesystems: [String], extensions: [String], loaded: [String], modules: [String],
+                         usesLegacyBackend: Bool = false) -> Self {
+        // 仅旧系统使用的明确运行时不算竞争者；其他FUSE/NTFS驱动仍暂停。
+        let filesystems = usesLegacyBackend ? filesystems.filter { $0 != "macfuse.fs" } : filesystems
+        let extensions = usesLegacyBackend ? extensions.filter { $0 != "macfuse.kext" } : extensions
+        let loaded = usesLegacyBackend ? loaded.filter { !$0.hasPrefix("io.macfuse.filesystems.macfuse.") } : loaded
         let markers = ["ntfs", "ufsd", "paragon", "tuxera", "fuse", "highpoint"]
         let candidates = filesystems + extensions + loaded.filter { !$0.hasPrefix("com.apple.") }
         if candidates.contains(where: { value in markers.contains { value.lowercased().contains($0) } }) {
@@ -21,8 +26,15 @@ struct AutoMountEnvironment: Sendable {
 
     static func load() async -> Self {
         do {
-            let modules = try await FSClient.shared.installedExtensions
-            let identifiers = modules.map(\.bundleIdentifier)
+            let identifiers: [String]
+            let legacy: Bool
+            if #available(macOS 15.4, *) {
+                identifiers = try await FSClient.shared.installedExtensions.map(\.bundleIdentifier)
+                legacy = false
+            } else {
+                identifiers = []
+                legacy = true
+            }
             return await Task.detached {
                 do {
                     let manager = FileManager.default
@@ -30,11 +42,16 @@ struct AutoMountEnvironment: Sendable {
                     let kext = try manager.contentsOfDirectory(atPath: "/Library/Extensions").filter { $0.hasSuffix(".kext") }
                     let text = try query("/usr/sbin/kextstat", ["-l"])
                     guard let loaded = parseLoaded(text) else { return Self(isClear: false, reason: "无法完整识别已加载驱动清单，自动挂载已暂停。") }
-                    let plugins = try query("/usr/bin/pluginkit", ["-m", "-A", "-D", "-p", "com.apple.fskit.fsmodule"])
-                    guard let registered = parseRegistered(plugins) else {
-                        return Self(isClear: false, reason: "无法完整识别已登记模块清单，自动挂载已暂停。")
+                    var registered: [String] = []
+                    if !legacy {
+                        let plugins = try query("/usr/bin/pluginkit", ["-m", "-A", "-D", "-p", "com.apple.fskit.fsmodule"])
+                        guard let parsed = parseRegistered(plugins) else {
+                            return Self(isClear: false, reason: "无法完整识别已登记模块清单，自动挂载已暂停。")
+                        }
+                        registered = parsed
                     }
-                    return classify(filesystems: fs, extensions: kext, loaded: loaded, modules: identifiers + registered)
+                    return classify(filesystems: fs, extensions: kext, loaded: loaded,
+                                    modules: identifiers + registered, usesLegacyBackend: legacy)
                 } catch { return Self(isClear: false, reason: "无法完整查询驱动竞争状态，自动挂载已暂停。") }
             }.value
         } catch { return Self(isClear: false, reason: "无法查询文件系统扩展，自动挂载已暂停。") }
