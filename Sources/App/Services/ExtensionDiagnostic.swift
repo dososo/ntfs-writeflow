@@ -9,6 +9,9 @@ struct ExtensionDiagnostic {
     static let pending = ExtensionDiagnostic(title: "正在查询", detail: "正在读取系统扩展状态。", isEnabled: false)
 
     @MainActor static func load() async -> ExtensionDiagnostic {
+        if let reason = LegacyMountEnvironment.currentUnavailableReason() {
+            return ExtensionDiagnostic(title: "当前虚拟机不支持兼容挂载", detail: reason, isEnabled: false)
+        }
         if #unavailable(macOS 15.4) {
             do {
                 try LegacyRuntime.checkInstalled()

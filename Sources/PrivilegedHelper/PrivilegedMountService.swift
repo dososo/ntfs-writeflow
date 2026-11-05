@@ -44,6 +44,9 @@ final class PrivilegedMountEngine: @unchecked Sendable {
         guard StorageBackend.current == .macFUSE, data.count <= 4096 else {
             throw HelperFailure(message: "此系统或请求不适用旧后端挂载。")
         }
+        if let reason = LegacyMountEnvironment.currentUnavailableReason() {
+            throw HelperFailure(message: reason)
+        }
         legacyProcesses = legacyProcesses.filter { $0.value.process.isRunning }
         let request = try JSONDecoder().decode(PrivilegedMountRequest.self, from: data)
         let media = try HelperMedia(request)
