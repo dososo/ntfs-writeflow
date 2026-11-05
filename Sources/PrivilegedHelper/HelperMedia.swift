@@ -59,7 +59,7 @@ enum HelperCommand {
         var errorDescription: String? { "挂载子进程状态未知（PID \(processID)），已保留凭据；请刷新检查后正常卸载，不能视为取消完成。" }
     }
 
-    // 仅新身份桥使用。普通文件避免后代持有Pipe使EOF等待无界；超时不等于挂载已取消。
+    // 旧系统身份桥和原生只读命令使用。普通文件避免后代持有Pipe使EOF等待无界；超时不等于已取消。
     static func runBridge(_ executable: String, _ arguments: [String], timeout: TimeInterval = 30) throws -> Data {
         var template = Array("/private/tmp/NTFSWriteFlow-mount-output.XXXXXX".utf8CString)
         let descriptor = mkstemp(&template)
@@ -116,7 +116,8 @@ enum FSKitMountBridge {
     static func arguments(for ticket: HelperTicket) throws -> [String] {
         let request = ticket.request
         _ = try HelperCommand.systemMountArguments(request, userID: ticket.userID, token: ticket.token)
-        guard request.wholeMediaRegistryID > 0, request.mediaByteCount > 0, ticket.fileSystemIdentity == nil else {
+        guard request.wholeMediaRegistryID > 0, request.mediaByteCount > 0, ticket.fileSystemIdentity == nil,
+              ticket.backend == nil || ticket.backend == .fsKit else {
             throw HelperFailure(message: "内部挂载凭据无效或已用于其他挂载。")
         }
         return [mode, String(ticket.userID), ticket.token, request.deviceID, String(request.mediaRegistryID),
@@ -132,7 +133,7 @@ enum FSKitMountBridge {
               ["ro", "rw"].contains(arguments[7]) else { throw HelperFailure(message: "内部挂载模式参数或系统版本不适用。") }
         let request = PrivilegedMountRequest(deviceID: arguments[3], mediaRegistryID: mediaID,
             wholeMediaRegistryID: wholeID, mediaByteCount: size, readOnly: arguments[7] == "ro")
-        let ticket = HelperTicket(userID: userID, token: arguments[2], request: request)
+        let ticket = HelperTicket(userID: userID, token: arguments[2], request: request, backend: .fsKit)
         _ = try self.arguments(for: ticket)
         return ticket
     }
@@ -162,6 +163,54 @@ enum FSKitMountBridge {
             }
         }
         throw HelperFailure(message: "内部挂载身份转换或固定程序启动失败（\(result)）。")
+    }
+}
+
+enum NativeReadOnlyMount {
+    // 原生只读和26前身份桥采用有界执行；建票据前扫描另按统一受管策略覆盖所有访问模式。
+    static func requiresBoundedCommand(readOnly: Bool, on version: OperatingSystemVersion = ProcessInfo.processInfo.operatingSystemVersion) -> Bool {
+        FSKitMountBridge.isRequired(on: version) || PrivilegedMountBackend.select(readOnly: readOnly, on: version) == .nativeReadOnly
+    }
+
+    static func invocation(_ request: PrivilegedMountRequest, userID: UInt32, token: String,
+                           on version: OperatingSystemVersion = ProcessInfo.processInfo.operatingSystemVersion) throws -> (String, [String]) {
+        guard PrivilegedMountBackend.select(readOnly: request.readOnly, on: version) == .nativeReadOnly,
+              request.wholeMediaRegistryID > 0, request.mediaByteCount > 0 else {
+            throw HelperFailure(message: "当前系统或访问模式不适用原生只读挂载。")
+        }
+        _ = try HelperCommand.systemMountArguments(request, userID: userID, token: token)
+        let path = PrivilegedMountConfiguration.namespace + "/\(userID)/\(token)/volume"
+        return ("/usr/sbin/diskutil", ["mount", "readOnly", "nobrowse", "-mountOptions", "nosuid,nodev,noowners",
+                                      "-mountPoint", path, request.deviceID])
+    }
+
+    static func verifyExpected(ticket: HelperTicket, mounted: MountedFileSystem) throws {
+        guard ticket.userID >= 501, ticket.userID != UInt32.max, VolumeRecord.validDeviceID(ticket.request.deviceID),
+              ticket.request.mediaRegistryID > 0, ticket.request.wholeMediaRegistryID > 0, ticket.request.mediaByteCount > 0,
+              ticket.backend == .nativeReadOnly, ticket.request.readOnly, mounted.type == "ntfs", mounted.isReadOnly,
+              mounted.ownerID == 0, mounted.source == "/dev/\(ticket.request.deviceID)",
+              PrivilegedMountConfiguration.token(mountPoint: mounted.mountPoint, userID: ticket.userID) == ticket.token,
+              !mounted.identity.isEmpty, ticket.fileSystemIdentity == nil || ticket.fileSystemIdentity == mounted.identity else {
+            throw HelperFailure(message: "未确认原票据对应的root专用原生只读挂载。")
+        }
+    }
+
+    static func verifyFlags(_ flags: UInt32) throws {
+        let required = UInt32(MNT_RDONLY | MNT_NOSUID | MNT_NODEV | MNT_DONTBROWSE | MNT_IGNORE_OWNERSHIP)
+        guard flags & required == required else { throw HelperFailure(message: "原生只读挂载的内核只读或安全标志不完整，未报告成功；请刷新后正常卸载。") }
+    }
+
+    static func verifyDescriptor(_ descriptor: Int32, ticket: HelperTicket, expected: MountedFileSystem) throws {
+        try verifyExpected(ticket: ticket, mounted: expected)
+        do { try ManagedUnmount.verifyDescriptor(descriptor, path: expected.mountPoint) }
+        catch { throw HelperFailure(message: "原生只读挂载根目录句柄与原路径不符。") }
+        var status = statfs()
+        guard fstatfs(descriptor, &status) == 0 else { throw HelperFailure(message: "无法回读原生只读挂载的内核标志。") }
+        try verifyFlags(status.f_flags)
+        guard MountedFileSystemReader.read(descriptor: descriptor) == expected,
+              MountedFileSystemReader.read(path: expected.mountPoint) == expected else {
+            throw HelperFailure(message: "原生只读挂载的原句柄、路径或实例已变化。")
+        }
     }
 }
 

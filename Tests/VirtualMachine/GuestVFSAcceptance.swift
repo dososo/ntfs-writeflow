@@ -229,6 +229,13 @@ private struct Mount: Equatable, Codable {
     }
     #if COMMAND_REGRESSION
     private static func commandRegression() throws {
+        for (major, minor, readOnly, expected) in [(13, 0, true, "macfuse"), (15, 3, true, "macfuse"),
+            (15, 4, true, "ntfs"), (15, 4, false, "blntfs"), (26, 0, true, "ntfs"), (26, 3, true, "ntfs"),
+            (26, 3, false, "blntfs"), (26, 4, true, "blntfs")] {
+            try require(expectedFileSystemType(readOnly: readOnly,
+                version: .init(majorVersion: major, minorVersion: minor, patchVersion: 0)) == expected,
+                "客体验收器必须分辨原生RO与FSKit RW，不能以错误后端代替")
+        }
         let run = FileManager.default.temporaryDirectory.appendingPathComponent("WriteFlow-普通文件命令回归-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: run, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         let normal = try command("/bin/sh", ["-c", "printf '普通成功'"], run: run, limit: 2)
@@ -256,7 +263,7 @@ private struct Mount: Equatable, Codable {
             try require(rejected, "未知镜像清单不能视为分离成功")
         }
         Thread.sleep(forTimeInterval: 2.1)
-        print("普通文件命令回归通过：正常输出、忽略TERM有界超时、TERM退出0仍失败、后代持stdout不阻塞、有效清单2项及未知结构6项；无设备操作。证据：\(run.path)")
+        print("普通文件命令回归通过：后端类型8项、正常输出、忽略TERM有界超时、TERM退出0仍失败、后代持stdout不阻塞、有效清单2项及未知结构6项；无设备操作。证据：\(run.path)")
     }
     #endif
     private static func verify(image: URL, device: String, bytes: Int64, expected: Binding?, run: URL) throws -> Binding {
@@ -294,13 +301,19 @@ private struct Mount: Equatable, Codable {
         _ = try verify(image: image, device: binding.device, bytes: bytes, expected: binding, run: run)
         let values = try mounts(for: binding.device)
         try require(values.count == 1, "GUI动作后未找到唯一真实VFS挂载；请保存应用原始错误，不用C回调替代")
-        let value = values[0], version = ProcessInfo.processInfo.operatingSystemVersion
-        let type = version.majorVersion > 15 || (version.majorVersion == 15 && version.minorVersion >= 4) ? "blntfs" : "macfuse"
+        let value = values[0]
+        let type = expectedFileSystemType(readOnly: readOnly)
         let prefix = "/private/var/db/com.blteam.ntfsworkbench.mounts/\(geteuid())/"
         let parts = value.path.hasPrefix(prefix) ? value.path.dropFirst(prefix.count).split(separator: "/", omittingEmptySubsequences: false).map(String.init) : []
         try require(value.type == type && value.owner == 0 && value.readOnly == readOnly && parts.count == 2 && parts.last == "volume" && UUID(uuidString: parts.first ?? "")?.uuidString == parts.first,
                     "挂载类型、root所有权、只读模式或本应用私有凭据路径不符")
         return value
+    }
+
+    private static func expectedFileSystemType(readOnly: Bool, version: OperatingSystemVersion = ProcessInfo.processInfo.operatingSystemVersion) -> String {
+        let fsKitSystem = version.majorVersion > 15 || (version.majorVersion == 15 && version.minorVersion >= 4)
+        let needsNativeReadOnly = version.majorVersion < 26 || (version.majorVersion == 26 && version.minorVersion < 4)
+        return fsKitSystem ? (readOnly && needsNativeReadOnly ? "ntfs" : "blntfs") : "macfuse"
     }
     private static func denyWrite(_ path: String, name: String) throws {
         let target = URL(fileURLWithPath: path).appendingPathComponent(name).path

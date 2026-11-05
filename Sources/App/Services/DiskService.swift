@@ -93,8 +93,11 @@ actor DiskService {
             } else {
                 result = try await PrivilegedMountClient.mount(request)
             }
+            let backend = PrivilegedMountBackend.select(readOnly: readOnly)
             guard let mounted = try record(expected.id), expected.matchesMediaIdentity(of: mounted),
                   mounted.mountPoint == result.mountPoint, mounted.isMountedByWriteFlow,
+                  mounted.mountedFileSystem?.type == backend.fileSystemType,
+                  result.backend == backend || (result.backend == nil && backend != .nativeReadOnly),
                   mounted.mountedFileSystem?.ownerID == 0,
                   mounted.mountedFileSystem?.identity == result.fileSystemIdentity,
                   PrivilegedMountConfiguration.token(mountPoint: result.mountPoint, userID: geteuid()) == result.token,

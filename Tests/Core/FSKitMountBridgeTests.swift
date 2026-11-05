@@ -16,7 +16,7 @@ import Darwin
         let version = OperatingSystemVersion(majorVersion: 15, minorVersion: 4, patchVersion: 0)
         let request = PrivilegedMountRequest(deviceID: "disk99s1", mediaRegistryID: 123,
             wholeMediaRegistryID: 122, mediaByteCount: 134_217_728, readOnly: true)
-        let ticket = HelperTicket(userID: 501, token: token, request: request)
+        let ticket = HelperTicket(userID: 501, token: token, request: request, backend: .fsKit)
         let arguments = ["--internal-fskit-mount", "501", token, "disk99s1", "123", "122", "134217728", "ro"]
         for (major, minor, expected) in [(13, 0, false), (14, 7, false), (15, 3, false), (15, 4, true),
                                        (15, 7, true), (25, 0, true), (26, 0, false), (27, 2, false)] {

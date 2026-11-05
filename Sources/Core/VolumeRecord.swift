@@ -19,7 +19,10 @@ enum StorageBackend: String, Sendable {
         return select(major: version.majorVersion, minor: version.minorVersion) ?? .macFUSE
     }
     static var requiresManagedMount: Bool {
-        !ProcessInfo.processInfo.isOperatingSystemAtLeast(OperatingSystemVersion(majorVersion: 26, minorVersion: 0, patchVersion: 0))
+        requiresManagedMount(on: ProcessInfo.processInfo.operatingSystemVersion)
+    }
+    static func requiresManagedMount(on version: OperatingSystemVersion) -> Bool {
+        version.majorVersion < 26 || (version.majorVersion == 26 && version.minorVersion < 4)
     }
     var title: String { self == .fsKit ? "FSKit" : "macFUSE 兼容后端" }
 }
@@ -33,7 +36,8 @@ struct MountedFileSystem: Equatable, Sendable {
     let isReadOnly: Bool
     var isWriteFlow: Bool {
         if type == "blntfs" { return true }
-        guard type == "macfuse", ownerID == 0 else { return false }
+        guard ["macfuse", "ntfs"].contains(type), ownerID == 0,
+              type != "ntfs" || isReadOnly else { return false }
         let prefix = "/private/var/db/com.blteam.ntfsworkbench.mounts/"
         guard mountPoint.hasPrefix(prefix) else { return false }
         let parts = mountPoint.dropFirst(prefix.count).split(separator: "/", omittingEmptySubsequences: false)

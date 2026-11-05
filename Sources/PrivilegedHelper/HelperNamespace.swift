@@ -6,6 +6,13 @@ struct HelperTicket: Codable {
     let token: String
     let request: PrivilegedMountRequest
     var fileSystemIdentity: String?
+    var backend: PrivilegedMountBackend?
+
+    func matchesBackend(_ mounted: MountedFileSystem) -> Bool {
+        guard let backend else { return ["blntfs", "macfuse"].contains(mounted.type) }
+        return mounted.type == backend.fileSystemType &&
+            (backend != .nativeReadOnly || (request.readOnly && mounted.isReadOnly))
+    }
 }
 
 // 每一级目录均经描述符核验；调用方从不提供文件系统路径。
@@ -88,6 +95,7 @@ final class HelperNamespace {
             let before = expected.request, after = saved.request
             guard saved.userID == expected.userID, saved.token == expected.token,
                   saved.fileSystemIdentity == expected.fileSystemIdentity,
+                  saved.backend == expected.backend,
                   before.deviceID == after.deviceID, before.mediaRegistryID == after.mediaRegistryID,
                   before.wholeMediaRegistryID == after.wholeMediaRegistryID,
                   before.mediaByteCount == after.mediaByteCount, before.readOnly == after.readOnly else {
@@ -217,7 +225,8 @@ final class HelperNamespace {
     }
 
     func create(_ request: PrivilegedMountRequest) throws -> HelperTicket {
-        let ticket = HelperTicket(userID: userID, token: UUID().uuidString, request: request)
+        let ticket = HelperTicket(userID: userID, token: UUID().uuidString, request: request,
+                                  backend: .select(readOnly: request.readOnly))
         let folder = try tokenDirectory(ticket.token, create: true)
         defer { close(folder) }
         let mount = try Self.directory(parent: folder, name: "volume", permissions: 0o755)

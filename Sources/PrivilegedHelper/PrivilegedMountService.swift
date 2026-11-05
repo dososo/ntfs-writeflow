@@ -20,13 +20,18 @@ final class PrivilegedMountEngine: @unchecked Sendable {
         }
         let namespace = try HelperNamespace(userID: userID)
         let usesBridge = FSKitMountBridge.isRequired()
-        if usesBridge { try namespace.requireNoPendingBridgeMount(for: request) }
+        let usesBoundedCommand = NativeReadOnlyMount.requiresBoundedCommand(readOnly: request.readOnly)
+        if StorageBackend.requiresManagedMount { try namespace.requireNoPendingBridgeMount(for: request) }
         var ticket = try namespace.create(request)
         let path = try namespace.mountPoint(ticket.token)
         var bridgeCommandSucceeded = false
         do {
             try media.validate(request)
-            if usesBridge {
+            if ticket.backend == .nativeReadOnly {
+                let invocation = try NativeReadOnlyMount.invocation(request, userID: userID, token: ticket.token)
+                _ = try HelperCommand.runBridge(invocation.0, invocation.1)
+                bridgeCommandSucceeded = true
+            } else if usesBridge {
                 let runtime = try namespace.runtimeDirectory(for: ticket)
                 defer { close(runtime) }
                 _ = try LegacyRuntime.prepareMountHelper(in: runtime, userID: userID, token: ticket.token)
@@ -40,6 +45,9 @@ final class PrivilegedMountEngine: @unchecked Sendable {
                 _ = try HelperCommand.run(invocation.0, invocation.1, mountUserID: userID)
             }
             let mounted = try verifiedMount(ticket, namespace: namespace)
+            if ticket.backend == .nativeReadOnly {
+                try verifyNativeReadOnly(ticket, namespace: namespace, mounted: mounted)
+            }
             ticket.fileSystemIdentity = mounted.identity
             try namespace.save(ticket)
             guard mounted.isReadOnly == request.readOnly else {
@@ -48,7 +56,7 @@ final class PrivilegedMountEngine: @unchecked Sendable {
             return try JSONEncoder().encode(result(ticket, path: path, mounted: mounted))
         } catch {
             // 系统命令失败也可能已产生挂载；此时保留凭据供同一用户查询和正常卸载。
-            let preserve = usesBridge && FSKitMountBridge.mustPreserveTicket(commandSucceeded: bridgeCommandSucceeded, error: error)
+            let preserve = usesBoundedCommand && FSKitMountBridge.mustPreserveTicket(commandSucceeded: bridgeCommandSucceeded, error: error)
             if !preserve, MountedFileSystemReader.read(path: path) == nil {
                 try? namespace.discardUnmounted(ticket.token)
             }
@@ -149,6 +157,9 @@ final class PrivilegedMountEngine: @unchecked Sendable {
             let mounted = try verifiedMount(ticket, namespace: namespace)
             if ticket.fileSystemIdentity == nil {
                 // 恢复命令已成功但凭据更新前进程退出的窗口；先完成全部介质与挂载核验。
+                if ticket.backend == .nativeReadOnly {
+                    try verifyNativeReadOnly(ticket, namespace: namespace, mounted: mounted)
+                }
                 ticket.fileSystemIdentity = mounted.identity
                 try namespace.save(ticket)
             }
@@ -194,15 +205,28 @@ final class PrivilegedMountEngine: @unchecked Sendable {
 
     static func matchesOwnedMount(_ ticket: HelperTicket, path: String, mounted: MountedFileSystem) -> Bool {
         // 模式不符的失败挂载仍需可查询、同步和正常卸载，模式只决定 mount 的成功回包。
-        mounted.isWriteFlow && mounted.source == "/dev/\(ticket.request.deviceID)"
+        mounted.isWriteFlow && ticket.matchesBackend(mounted) && mounted.source == "/dev/\(ticket.request.deviceID)"
             && mounted.ownerID == 0 && mounted.mountPoint == path
             && (ticket.fileSystemIdentity == nil || ticket.fileSystemIdentity == mounted.identity)
+    }
+
+    private func verifyNativeReadOnly(_ ticket: HelperTicket, namespace: HelperNamespace, mounted: MountedFileSystem) throws {
+        let lease = try namespace.unmountLease(for: ticket)
+        let descriptor = open(mounted.mountPoint, O_EVTONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard descriptor >= 0 else { throw HelperFailure(message: "无法持有原生只读挂载根目录句柄。") }
+        defer { close(descriptor) }
+        try withExtendedLifetime(lease) {
+            try lease.validate()
+            try HelperMedia(ticket.request).validate(ticket.request)
+            try NativeReadOnlyMount.verifyDescriptor(descriptor, ticket: ticket, expected: mounted)
+            try lease.validate()
+        }
     }
 
     private func result(_ ticket: HelperTicket, path: String, mounted: MountedFileSystem) -> PrivilegedMountResult {
         PrivilegedMountResult(token: ticket.token, mountPoint: path, deviceID: ticket.request.deviceID,
             mediaRegistryID: ticket.request.mediaRegistryID, wholeMediaRegistryID: ticket.request.wholeMediaRegistryID,
-            fileSystemIdentity: mounted.identity, readOnly: mounted.isReadOnly)
+            fileSystemIdentity: mounted.identity, readOnly: mounted.isReadOnly, backend: ticket.backend)
     }
 }
 

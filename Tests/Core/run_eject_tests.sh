@@ -29,7 +29,7 @@ xcrun swiftc "${SWIFT_ARGS[@]}" "${HELPER_ARGS[@]}" Tests/Core/PrivilegedHelperH
 "${RUN[@]}" "$OUT/句柄传输回归"
 
 # 同一真实助手模块覆盖发现、正常卸载、兼容收尾与安全策略。
-for test in ManagedMountDiscovery ManagedUnmount LegacyMountEnvironment LegacyMountProcess PrivilegedHelperPolicy PrivilegedHelperACL PrivilegedHelperSession FSKitMountBridge; do
+for test in ManagedMountDiscovery ManagedUnmount LegacyMountEnvironment LegacyMountProcess PrivilegedHelperPolicy PrivilegedHelperACL PrivilegedHelperSession FSKitMountBridge NativeReadOnlyMount; do
   xcrun swiftc "${SWIFT_ARGS[@]}" "${HELPER_ARGS[@]}" "Tests/Core/${test}Tests.swift" -o "$OUT/$test"
   "${RUN[@]}" "$OUT/$test"
 done
