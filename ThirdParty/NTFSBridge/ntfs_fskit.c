@@ -756,6 +756,12 @@ static uint32_t nfsk_inode_type(ntfs_inode *ni) {
     return NFSK_TYPE_SYMLINK;
 }
 
+/* 不依赖系统是否保留nodev；外部预制Interix项也不能成为设备等特殊vnode。 */
+static int nfsk_special_type(uint32_t type) {
+    return type == NFSK_TYPE_FIFO || type == NFSK_TYPE_CHARDEV ||
+           type == NFSK_TYPE_BLOCKDEV || type == NFSK_TYPE_SOCKET;
+}
+
 int nfsk_getattr(ntfs_fskit_volume *v, uint64_t ino, nfsk_attr_t *out) {
     if (!v || !v->vol || !out) return -EINVAL;
     if (is_reserved_mft(to_mref(ino))) return -ENOENT;   /* metadata is not a file */
@@ -773,6 +779,7 @@ int nfsk_getattr(ntfs_fskit_volume *v, uint64_t ino, nfsk_attr_t *out) {
     out->flags = ni->mft_no != FILE_root && (ni->flags & FILE_ATTR_HIDDEN) ? UF_HIDDEN : 0;
 
     uint32_t type = nfsk_inode_type(ni);
+    if (nfsk_special_type(type)) { nfsk_inode_close(ni); return -ENOTSUP; }
     if (type == NFSK_TYPE_DIR) {
         out->type = NFSK_TYPE_DIR;
         if (!test_nino_flag(ni, KnownSize)) {
@@ -840,6 +847,14 @@ uint64_t nfsk_lookup_name(ntfs_fskit_volume *v, uint64_t dir_ino, const char *na
     int saved = mref == (u64)-1 ? (errno ? errno : ENOENT) : 0;
     nfsk_inode_close(dir);
     if (!saved && is_reserved_mft(MREF(mref))) saved = ENOENT;
+    if (!saved) {
+        ntfs_inode *ni = nfsk_inode_open(v->vol, mref);
+        if (!ni) saved = errno ? errno : EIO;
+        else {
+            if (nfsk_special_type(nfsk_inode_type(ni))) saved = ENOTSUP;
+            if (nfsk_inode_close(ni) && !saved) saved = errno ? errno : EIO;
+        }
+    }
     if (!saved && canonical_name) {
         ntfs_inode *ni = nfsk_inode_open(v->vol, mref);
         if (!ni) saved = errno ? errno : EIO;
@@ -954,6 +969,7 @@ int nfsk_readdir(ntfs_fskit_volume *v, uint64_t dir_ino, int64_t start_cookie, v
             uint32_t type;
             int rc = nfsk_directory_entry_type(v->vol, ref, flags, &type);
             if (rc) { free(name); saved = -rc; break; }
+            if (nfsk_special_type(type)) { free(name); goto next_entry; }
             int stopped = cb(ctx, name, from_mft(MREF(ref)), type, ordinal);
             free(name);
             if (stopped) break;
@@ -1455,11 +1471,12 @@ static int nfsk_unlink_name(ntfs_volume *vol, uint64_t dir_no,
 int nfsk_open_item(ntfs_fskit_volume *v, uint64_t ino) {
     if (!v || !v->vol) return -EINVAL;
     if (is_reserved_mft(to_mref(ino))) return -EPERM;
-    nfsk_open_ref *existing = nfsk_open_ref_for(v->vol, to_mref(ino));
-    if (existing) { existing->open = true; return 0; }
     ntfs_inode *ni = nfsk_inode_open(v->vol, to_mref(ino));
     if (!ni) return -(errno ? errno : EIO);
+    if (nfsk_special_type(nfsk_inode_type(ni))) { nfsk_inode_close(ni); return -ENOTSUP; }
     if (nfsk_inode_close(ni)) return -(errno ? errno : EIO);
+    nfsk_open_ref *existing = nfsk_open_ref_for(v->vol, to_mref(ino));
+    if (existing) { existing->open = true; return 0; }
     nfsk_open_ref *entry = calloc(1, sizeof(*entry));
     if (!entry) return -ENOMEM;
     entry->ref = to_mref(ino);

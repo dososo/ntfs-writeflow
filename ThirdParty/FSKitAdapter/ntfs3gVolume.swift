@@ -726,6 +726,9 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
         try withLock {
             guard let h = handle, let it = item as? ntfs3gItem else { throw posixError(EINVAL) }
             if readOnly && modes.contains(.write) { throw posixError(EROFS) }
+            var attributes = nfsk_attr_t()
+            let status = nfsk_getattr(h, it.ino, &attributes)
+            if status != 0 { throw posixError(-status) }
             guard legacyOpenUnlink else { return }
             let rc = nfsk_open_item(h, it.ino)
             if rc != 0 { throw posixError(-rc) }
