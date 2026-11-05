@@ -17,7 +17,7 @@ final class PrivilegedMountEngine: @unchecked Sendable {
         let path = try namespace.mountPoint(ticket.token)
         do {
             try media.validate(request)
-            // 固定挂载子进程通过系统支持的 SUDO_UID 分离用户扩展发现与 root 设备访问。
+            // 子进程采用可信用户登录会话，并用 SUDO_UID 分离扩展发现与 root 设备访问。
             let invocation = try HelperCommand.mountInvocation(request, userID: userID, token: ticket.token)
             _ = try HelperCommand.run(invocation.0, invocation.1, mountUserID: userID)
             let mounted = try verifiedMount(ticket, namespace: namespace)

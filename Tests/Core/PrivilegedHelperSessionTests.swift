@@ -15,9 +15,10 @@ import Darwin
         }
         for readOnly in [true, false] {
             let invocation = try HelperCommand.mountInvocation(request(readOnly), userID: 501, token: token)
-            check(invocation.0 == "/sbin/mount" && Array(invocation.1.prefix(4)) ==
-                  ["-F", "-t", "blntfs", "-o"], "只能执行固定挂载程序")
-            check(invocation.1[4] == "\(readOnly ? "ro" : "rw"),nosuid,nodev,noowners,nobrowse,writeflow-media-id=123",
+            check(invocation.0 == "/bin/launchctl" && Array(invocation.1.prefix(7)) ==
+                  ["asuser", "501", "/sbin/mount", "-F", "-t", "blntfs", "-o"],
+                  "必须在可信连接用户的登录会话内执行固定挂载程序")
+            check(invocation.1[7] == "\(readOnly ? "ro" : "rw"),nosuid,nodev,noowners,nobrowse,writeflow-media-id=123",
                   "挂载选项只能来自固定策略和介质标识")
             check(Array(invocation.1.suffix(2)) == ["/dev/disk9999", PrivilegedMountConfiguration.namespace + "/501/\(token)/volume"],
                   "设备与路径必须规范且由助手派生")
@@ -27,7 +28,8 @@ import Darwin
         }
         check(try HelperCommand.environment(for: "/usr/sbin/diskutil") ==
               ["PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "C"], "磁盘查询不接收挂载身份或父进程环境")
-        for (program, userID): (String, UInt32) in [("/usr/sbin/diskutil", 501), ("/sbin/mount", 0)] {
+        for (program, userID): (String, UInt32) in [("/usr/sbin/diskutil", 501), ("/sbin/mount", 501), ("/bin/launchctl", 0),
+              ("/bin/launchctl", 500), ("/bin/launchctl", .max)] {
             do {
                 _ = try HelperCommand.environment(for: program, mountUserID: userID)
                 fatalError("其他程序或无效用户不得接收挂载身份")
@@ -68,7 +70,7 @@ import Darwin
         }
         check(loaded?.token == token, "实际挂载存在时继续凭据核验流程")
         let report: [String: Any] = ["结果": "通过", "数量": count,
-            "范围": "固定mount调用及SUDO_UID环境、无挂载孤目录跳过、已挂载凭据错误不吞掉；未运行挂载命令、未注册服务、未操作设备。"]
+            "范围": "固定asuser与mount调用及SUDO_UID环境、无挂载孤目录跳过、已挂载凭据错误不吞掉；未运行挂载命令、未注册服务、未操作设备。"]
         let data = try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
         try data.write(to: URL(fileURLWithPath: FileManager.default.currentDirectoryPath + "/build/helper-candidate/会话与恢复验证结果.json"))
         print(String(decoding: data, as: UTF8.self))
