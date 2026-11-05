@@ -9,20 +9,20 @@
 在 Mac 上读写 NTFS，把磁盘交还给日常使用。
 
 [![许可](https://img.shields.io/badge/许可-GPL--2.0-168B86.svg)](LICENSE)
-[![macOS](https://img.shields.io/badge/macOS-26%2B-23334B.svg)](#安装)
-[![架构](https://img.shields.io/badge/架构-Apple%20Silicon-168B86.svg)](#安装)
+[![macOS](https://img.shields.io/badge/macOS-13%2B-23334B.svg)](#安装)
+[![架构](https://img.shields.io/badge/架构-Intel%20%2B%20Apple%20Silicon-168B86.svg)](#安装)
 [![状态](https://img.shields.io/badge/状态-开发候选-B66C24.svg)](#验证状态与边界)
-[![版本](https://img.shields.io/badge/版本-0.2.0--预览版-23334B.svg)](https://github.com/dososo/ntfs-writeflow/releases/tag/v0.2.0)
+[![版本](https://img.shields.io/badge/版本-0.3.0--兼容预览-23334B.svg)](https://github.com/dososo/ntfs-writeflow/releases/tag/v0.3.0)
 [![技术](https://img.shields.io/badge/SwiftUI%20%2B%20FSKit%20%2B%20NTFS--3G-23334B.svg)](#技术栈与架构)
 
 <p>
-  <a href="https://github.com/dososo/ntfs-writeflow/releases/download/v0.2.0/NTFS-WriteFlow-0.2.0-arm64.dmg"><strong>⬇ 下载 Mac 应用（DMG）</strong></a>
+  <a href="https://github.com/dososo/ntfs-writeflow/releases/download/v0.3.0/NTFS-WriteFlow-0.3.0-universal.dmg"><strong>⬇ 下载 Mac 应用（DMG）</strong></a>
   &nbsp;·&nbsp;
-  <a href="https://github.com/dososo/ntfs-writeflow/releases/download/v0.2.0/NTFS-WriteFlow-0.2.0-arm64.zip">ZIP 下载</a>
+  <a href="https://github.com/dososo/ntfs-writeflow/releases/download/v0.3.0/NTFS-WriteFlow-0.3.0-universal.zip">ZIP 下载</a>
   &nbsp;·&nbsp;
-  <a href="https://github.com/dososo/ntfs-writeflow/releases/tag/v0.2.0">全部 Release 附件</a>
+  <a href="https://github.com/dososo/ntfs-writeflow/releases/tag/v0.3.0">全部 Release 附件</a>
 </p>
-<p><sub>0.2.0 预览版 · Apple Silicon · macOS 26 及以上</sub></p>
+<p><sub>0.3.0 兼容预览 · Intel 与 Apple Silicon 通用包 · macOS 13 及以上</sub></p>
 
 </div>
 
@@ -35,9 +35,9 @@
 
 ## NTFS 畅写是什么
 
-NTFS 畅写是一款 **macOS 原生 NTFS 桌面应用**。SwiftUI 提供磁盘界面，Apple FSKit 承载用户空间文件系统，NTFS-3G 提供 NTFS 引擎。通过本应用挂载的卷以 `blntfs` 标识，在 Finder 和普通文件操作中使用。
+NTFS 畅写是一款 **macOS 原生 NTFS 桌面应用**。SwiftUI 提供磁盘界面，macOS 15.4 及以上由 Apple FSKit 承载文件系统；macOS 13～15.3 使用用户安装的官方 macFUSE 和随包兼容前端；两条路径共用 NTFS-3G 引擎。自有挂载分别以 `blntfs` 或受凭据保护的 `macfuse` 标识，在 Finder 和普通文件操作中使用。
 
-应用界面目前为简体中文，并提供英文 README 使用与构建说明。核心读写、正常卸载与外部固定硬盘安全推出已完成真实验证。正在补齐完整产品能力与兼容性验收，**当前定位为开发候选，不能作为所有 NTFS 磁盘均已验证的稳定版承诺**。
+应用界面和当前维护文档使用简体中文。核心读写、正常卸载与外部固定硬盘安全推出已完成真实验证。正在补齐完整产品能力与兼容性验收，**当前定位为开发候选，不能作为所有 NTFS 磁盘均已验证的稳定版承诺**。
 
 ## 为什么做 NTFS 畅写
 
@@ -48,7 +48,7 @@ NTFS 畅写是一款 **macOS 原生 NTFS 桌面应用**。SwiftUI 提供磁盘�
 ## 核心功能
 
 - **真实卷状态**：显示文件系统、容量、挂载位置和当前访问状态；默认关注 NTFS，也可查看其他文件系统。
-- **只读与读写挂载**：由 FSKit 与 NTFS-3G 提供文件访问，物理盘通过经系统授权的管理员服务挂载。
+- **只读与读写挂载**：根据系统版本使用 FSKit 或 macFUSE 与随包 NTFS-3G；物理盘通过经系统授权的管理员服务挂载。
 - **Finder 文件操作**：创建文件、目录、重命名与复制；已验证中文、长名称、扩展属性、大文件和稀疏文件。
 - **正常卸载与整盘推出**：同步卷、正常卸载同盘分卷，再请求整盘推出并核对结果；遇到占用或错误不强制卸载。对仍保持物理连接的固定 USB 硬盘，明确区分“已安全推出”与“设备已移除”。
 - **菜单栏与设置**：查看卷、调整自动刷新、管理挂载服务，导出本地诊断。
@@ -79,29 +79,31 @@ NTFS 畅写是一款 **macOS 原生 NTFS 桌面应用**。SwiftUI 提供磁盘�
 
 截图来自此前已验收版本与专用的 `WriteFlow Demo` 测试镜像。图片中的临时设备编号、挂载路径不适用于其他机器；不是可复制的操作命令。
 
-0.2.0 新增逐盘自动挂载、登录启动、会话保护与写前预检，并提供 Issue #3 的挂载会话候选修正。自动管理默认关闭；macOS 27.2 实体盘问题仍待复测。[查看本版预览范围与限制](发布/0.2.0预览发行说明.md)。
+**0.3.0 根据用户反馈补齐 Intel 通用包与旧系统实际运行路径**，解决最低系统、窗口 API 和卸载接口阻断，增加 macOS 13～15.3 的真实 macFUSE 读写后端、整盘互斥与最终写回回执。保留 0.2.0 的逐盘自动挂载、登录启动、会话保护与写前预检；自动管理默认关闭。MacFUSE 需用户自行安装批准，目标系统／Intel 硬件仍待验；macOS 27.2 实体盘 Issue #3 保持待复测。[查看本版更新与支持矩阵](发布/0.3.0兼容预览发行说明.md)。
 
 ## 安装
 
-> **目标环境**：macOS 26 及以上 · Apple Silicon。当前实测为 macOS 26.6.2；Intel、旧系统和所有 macOS 26 小版本未完成兼容性验证。
+**运行目标**：macOS 13 及以上，Intel 与 Apple Silicon 通用包。当前真实执行环境为 macOS 26.6.2 的 ARM 与 Rosetta；最低系统构建、模拟和镜像回归不等于旧系统／Intel 硬件全部验收通过。
 
-从 [0.2.0 预览版 Release](https://github.com/dososo/ntfs-writeflow/releases/tag/v0.2.0) 下载 [DMG 安装包](https://github.com/dososo/ntfs-writeflow/releases/download/v0.2.0/NTFS-WriteFlow-0.2.0-arm64.dmg) 或 [应用 ZIP](https://github.com/dososo/ntfs-writeflow/releases/download/v0.2.0/NTFS-WriteFlow-0.2.0-arm64.zip)。同一页面提供完整对应源码、`SHA256SUMS.txt` 和分发验证记录。此版本保持开发预览定位。
+| 系统 | 文件系统后端 | 用户前置 |
+| --- | --- | --- |
+| macOS 15.4 及以上 | 随包 FSKit 扩展 | 启用本应用文件系统扩展与管理员服务 |
+| macOS 13～15.3 | 随包 NTFS-3G 兼容前端，调用官方 macFUSE | 自行安装并批准 [macFUSE](https://github.com/macfuse/macfuse/wiki/Getting-Started)，再配置管理员服务；Apple Silicon 可能需本人在恢复模式批准内核扩展与调整启动安全 |
 
-安装步骤：
+从 [0.3.0 兼容预览 Release](https://github.com/dososo/ntfs-writeflow/releases/tag/v0.3.0) 下载 [DMG 安装包](https://github.com/dososo/ntfs-writeflow/releases/download/v0.3.0/NTFS-WriteFlow-0.3.0-universal.dmg) 或 [应用 ZIP](https://github.com/dososo/ntfs-writeflow/releases/download/v0.3.0/NTFS-WriteFlow-0.3.0-universal.zip)。同页提供完整对应源码、`SHA256SUMS.txt` 和分发验证记录。
 
-1. 核对随包 `SHA256SUMS.txt`，解压应用 ZIP，将 `NTFSWriteFlow.app` 放入个人主目录的 **`Applications`** 文件夹，即 `~/Applications`。这是当前实际验收的位置。
-2. 从该固定位置打开应用，在 **系统设置 → 通用 → 登录项与扩展 → 文件系统扩展** 中启用模块。部分系统需要进入“按类别”查看。
-3. 如需挂载物理盘，打开应用 **设置 → 物理磁盘挂载 → 配置管理员挂载服务**，在 macOS 系统窗口完成授权。
-4. 选择测试卷的只读或读写挂载，确认实际挂载类型为 `blntfs`，再在 Finder 中访问。已有其他驱动挂载时，先保存文件并通过原工具正常卸载。
-5. 完成后正常卸载或按已验证的整盘弹出流程操作，等待系统结果；失败时处理占用后重试。
+1. 先校验附件，将 `NTFSWriteFlow.app` 放入个人 `~/Applications` 固定位置。
+2. macOS 15.4 及以上在系统设置启用本应用 FSKit 文件系统扩展；13～15.3 先按官方说明准备 macFUSE。本应用不安装第三方驱动，也不自动修改系统安全设置。
+3. 在应用设置配置管理员挂载服务，按 macOS 系统窗口完成授权。先使用可丢弃测试卷；已有其他驱动挂载时，通过原工具正常卸载。
+4. 选择只读或读写挂载并核对来源和模式，随后在 Finder 访问；完成后正常卸载／安全推出，等待明确结果。兼容后端每块整盘同时只支持一个分区会话。
 
-文件系统扩展和管理员服务是两项独立系统授权。整盘弹出流程还可能触发前台的 macOS 设备访问认证；请本人在系统窗口使用 Touch ID 或本机密码完成，不向聊天、问题报告或应用自定义表单提供密码。已有管理员服务授权不保证本次设备操作获得许可。取消授权或系统拒绝时，卷可能已卸载，但整盘尚未弹出；等待明确结果，不将卸载成功当作可拔盘。不要求关闭 SIP、禁用 Gatekeeper、降低启动安全或向后台服务授予完全磁盘访问权限。公证状态须以**该版本对应产物**的验证记录为准，不能沿用旧版结论。
+整盘设备访问可能另行触发前台系统认证，请本人在 macOS 窗口使用 Touch ID 或密码。取消授权、挂载占用、最终写回错误或回执未知时停止，不把“挂载点消失”当作写回和安全推出成功。旧系统在 root 私有一次性目录与身份租约下正常路径卸载；26 及以上保留按文件句柄卸载，边界见发行说明。
 
 完整步骤与移除服务、卸载应用的顺序见[安装与卸载](发布/安装与卸载.md)。
 
 ## 验证状态与边界
 
-以下表格含历史版本的分项证据；0.2.0本轮回归与未验范围以[预览发行说明](发布/0.2.0预览发行说明.md)和Release验证附件为准：
+以下表格含历史版本的分项证据；0.3.0本轮回归与未验范围以[兼容预览发行说明](发布/0.3.0兼容预览发行说明.md)和[可核验说明](发布/0.3.0可核验说明.md)和Release验证附件为准：
 
 | 范围 | 已验证行为 |
 | --- | --- |
@@ -144,7 +146,7 @@ NTFS_BUILD_CONFIGURATION=Release bash script/build_and_run.sh --build-only
 
 完整源码包包含固定版本 NTFS-3G 源码、上游 Git bundle 和哈希清单。准备脚本只恢复依赖的 Git 元数据，不覆盖源码、不安装驱动，恢复过程无需联网。GitHub 仓库保留真正的 Git 子模块引用，源码归档另附完整依赖树，不混淆两种交付方式。
 
-产物为 `build/xcode/Build/Products/Release/NTFSWorkbench.app`。默认脚本使用临时签名；**能编译、能打开主窗口，不等于获得 FSKit 加载授权**。开发者自行分发需使用自己的 Developer ID、FSKit 描述文件与匹配标识，并核验管理员服务的签名策略。详见[源码与签名说明](发布/开源说明.md)。
+默认构建同时生成两种架构，主程序／助手／兼容前端最低13，扩展最低15.4。可用 `NTFS_BUILD_ARCH=arm64` 或 `x86_64` 明确选择单架构开发包；发行采用默认通用包。产物为 `build/xcode/Build/Products/Release/NTFSWorkbench.app`。默认脚本使用临时签名；**能编译、能打开主窗口，不等于获得 FSKit 加载授权**。开发者自行分发需使用自己的 Developer ID、FSKit 描述文件与匹配标识，并核验管理员服务的签名策略。详见[源码与签名说明](发布/开源说明.md)。
 
 ```sh
 bash script/test_engine.sh
@@ -163,6 +165,7 @@ python3 -m unittest discover -s Tests -p 'test_signing_gate.py'
 | [管理员服务](Sources/PrivilegedHelper) | 经系统授权后执行受限挂载、正常卸载及整盘推出前准备，验证客户端签名和目标身份。 |
 | [前台整盘推出](Sources/HelperShared/DiskEject.swift) | 由应用取得系统只读设备授权，绑定同一描述符请求推出，核验介质移除或固定盘安全关闭回执。 |
 | [FSKit 适配层](ThirdParty/FSKitAdapter) | 将 macOS 文件系统调用交给后端，管理卷生命周期。 |
+| [旧系统兼容前端](Sources/LegacyBackend) | 将 macFUSE 回调接入同一 NTFS 引擎，持有授权 FD／整盘锁，并持久记录最后关闭结果。 |
 | [C 桥接](ThirdParty/NTFSBridge)与 NTFS-3G | NTFS 文件和目录操作；固定上游版本并记录修改。 |
 
 ## 许可与来源

@@ -15,12 +15,9 @@ extension HelperEject {
             }
             let descriptor = handle.fileDescriptor
             try PrivilegedMountEngine.validateUnmountDescriptor(descriptor, expected: expected)
-            guard fsync(descriptor) == 0 else {
-                throw HelperFailure(message: "同步未完成（\(errno)），未卸载此卷或弹出整盘。")
-            }
-            guard funmount(descriptor, 0) == 0 else {
-                throw HelperFailure(message: "卷未能正常卸载（\(errno)），未弹出整盘；请关闭占用程序后重试。")
-            }
+            // 旧系统的其他工具挂载卷没有本应用私有租约，拒绝替它卸载。
+            try ManagedUnmount.synchronizeAndUnmount(descriptor: descriptor, expected: expected,
+                legacyLease: nil, validateMedia: { try self.validateIdentity() })
         }
         try validateIdentity()
         guard try relatedMounts().isEmpty else {

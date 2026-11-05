@@ -7,6 +7,23 @@ enum AppCapabilities {
     static let directMountEnabled = true
 }
 
+enum StorageBackend: String, Sendable {
+    case fsKit, macFUSE
+
+    static func select(major: Int, minor: Int) -> Self? {
+        guard major >= 13 else { return nil }
+        return major > 15 || (major == 15 && minor >= 4) ? .fsKit : .macFUSE
+    }
+    static var current: Self {
+        let version = ProcessInfo.processInfo.operatingSystemVersion
+        return select(major: version.majorVersion, minor: version.minorVersion) ?? .macFUSE
+    }
+    static var requiresManagedMount: Bool {
+        !ProcessInfo.processInfo.isOperatingSystemAtLeast(OperatingSystemVersion(majorVersion: 26, minorVersion: 0, patchVersion: 0))
+    }
+    var title: String { self == .fsKit ? "FSKit" : "macFUSE 兼容后端" }
+}
+
 struct MountedFileSystem: Equatable, Sendable {
     let type: String
     let source: String
@@ -14,6 +31,17 @@ struct MountedFileSystem: Equatable, Sendable {
     let identity: String
     let ownerID: UInt32
     let isReadOnly: Bool
+    var isWriteFlow: Bool {
+        if type == "blntfs" { return true }
+        guard type == "macfuse", ownerID == 0 else { return false }
+        let prefix = "/private/var/db/com.blteam.ntfsworkbench.mounts/"
+        guard mountPoint.hasPrefix(prefix) else { return false }
+        let parts = mountPoint.dropFirst(prefix.count).split(separator: "/", omittingEmptySubsequences: false)
+        guard parts.count == 3, let user = UInt32(parts[0]), user >= 501, user != UInt32.max,
+              String(user) == parts[0], parts[2] == "volume",
+              UUID(uuidString: String(parts[1]))?.uuidString == String(parts[1]) else { return false }
+        return true
+    }
 }
 
 enum VolumeAccess: String, Sendable {
@@ -64,6 +92,7 @@ struct VolumeRecord: Identifiable, Equatable, Sendable {
         isNTFS = ["ntfs", "ufsd_ntfs", "blntfs"].contains(declaredType)
             || fileSystemName.lowercased().contains("ntfs")
             || (info["Content"] as? String) == "Windows_NTFS"
+            || (mountedFileSystem?.isWriteFlow == true && mountedFileSystem?.source == "/dev/\(identifier)")
         writableVolume = info["WritableVolume"] as? Bool ?? info["Writable"] as? Bool
         writableMedia = info["WritableMedia"] as? Bool
         totalBytes = (info["TotalSize"] as? NSNumber)?.int64Value
@@ -99,7 +128,7 @@ struct VolumeRecord: Identifiable, Equatable, Sendable {
     }
 
     var isMountedByWriteFlow: Bool {
-        mountedFileSystem?.type == "blntfs" && mountedFileSystem?.source == "/dev/\(id)"
+        mountedFileSystem?.isWriteFlow == true && mountedFileSystem?.source == "/dev/\(id)"
             && mountedFileSystem?.mountPoint == mountPoint
     }
 
@@ -142,7 +171,8 @@ struct VolumeRecord: Identifiable, Equatable, Sendable {
     }
 
     static func validDeviceID(_ value: String) -> Bool {
-        value.range(of: #"^disk[0-9]+(s[0-9]+)*$"#, options: .regularExpression) != nil
+        guard let match = value.range(of: #"^disk[0-9]+(s[0-9]+)*$"#, options: .regularExpression) else { return false }
+        return match.lowerBound == value.startIndex && match.upperBound == value.endIndex
     }
 
     private static func nonempty(_ value: String?) -> String? {

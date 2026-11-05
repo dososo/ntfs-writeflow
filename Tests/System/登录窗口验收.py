@@ -18,6 +18,7 @@ def matches_visible(event, expected):
               for w in event['windows'])
     return visible_roles(event)==expected and count==len(expected)
 
+import argparse
 import hashlib
 import json
 import os
@@ -32,20 +33,34 @@ import uuid
 ROOT=Path(__file__).resolve().parents[2]
 
 def main():
-    if len(sys.argv)!=1:raise SystemExit('不接受外部应用或进程参数')
-    run=Path(tempfile.mkdtemp(prefix='窗口生命周期-',dir=ROOT/'build/0.2.0'))
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--build-only',action='store_true',help='仅构建本轮私有宿主，不启动应用')
+    parser.add_argument('--legacy-controller',action='store_true',help='在当前系统直接验收生产兼容窗口控制器，不伪造系统版本')
+    options=parser.parse_args()
+    architecture=os.environ.get('NTFS_TEST_ARCH',os.uname().machine)
+    if architecture not in {'arm64','x86_64'}:raise SystemExit('测试架构仅支持arm64或x86_64')
+    output=ROOT/'build/0.3.0/UI兼容';output.mkdir(parents=True,exist_ok=True)
+    run=Path(tempfile.mkdtemp(prefix='窗口生命周期-',dir=output))
     source=ROOT/'Sources/App/NTFSWorkbenchApp.swift';stub=Path(__file__).with_name('登录窗口替身.swift')
+    compatibility=ROOT/'Sources/App/WorkbenchUICompatibility.swift'
     frozen=run/'冻结';frozen.mkdir()
-    production=source.read_bytes();replacement=stub.read_bytes()
+    production=source.read_bytes();replacement=stub.read_bytes();bridge=compatibility.read_bytes()
     (frozen/source.name).write_bytes(production);(frozen/stub.name).write_bytes(replacement)
+    (frozen/compatibility.name).write_bytes(bridge)
+    entry=source
+    if options.legacy_controller:
+        entry=Path(__file__).with_name('兼容窗口宿主.swift')
+        (frozen/entry.name).write_bytes(entry.read_bytes())
     app=run/'WindowLifecycleProbe.app';binary=app/'Contents/MacOS/WindowLifecycleProbe';binary.parent.mkdir(parents=True)
     bundle_id='com.blteam.writeflow.windowprobe.'+uuid.uuid4().hex
     (app/'Contents/Info.plist').write_bytes(plistlib.dumps({'CFBundleExecutable':binary.name,
         'CFBundleIdentifier':bundle_id,'CFBundleName':'窗口生命周期独立验收','CFBundlePackageType':'APPL',
         'CFBundleVersion':'1','CFBundleShortVersionString':'1.0','NSPrincipalClass':'NSApplication',
-        'NSHighResolutionCapable':True,'LSMinimumSystemVersion':'26.0'}))
+        'NSHighResolutionCapable':True,'LSMinimumSystemVersion':'13.0'}))
     result={'范围':'原字节生产App及WorkbenchDelegate+无磁盘替身，经真实LaunchServices启动；登录原因注入，不注册登录项或执行真实登录',
         '生产AppSHA256':hashlib.sha256(production).hexdigest(),'替身SHA256':hashlib.sha256(replacement).hexdigest(),
+        '生产UI桥接SHA256':hashlib.sha256(bridge).hexdigest(),'测试架构':architecture,'应用路径':str(app),
+        '直接验收Legacy窗口控制器':options.legacy_controller,'测试入口SHA256':hashlib.sha256(entry.read_bytes()).hexdigest(),
         '目录':str(run),'独立BundleID':bundle_id,'命令':[],'场景':[],'结果':'进行中'}
     def save():
         (run/'结果.json').write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n')
@@ -59,9 +74,10 @@ def main():
         def __init__(self,name,login,menu):
             self.name=name;self.login=login;self.menu=menu;self.token=str(uuid.uuid4()).upper();self.pid=None
             self.expected_confirmations=0 if login else 1
+            self.window_instances={}
             self.root=run/name;self.root.mkdir(mode=0o700)
             # GUI测试进程只在私有临时目录收发；避免Documents触发TCC授权干扰时序。
-            self.ipc=Path(tempfile.mkdtemp(prefix='writeflow-window-ipc-'));self.ipc.chmod(0o700)
+            self.ipc=Path(tempfile.mkdtemp(prefix='writeflow-window-ipc-',dir='/private/tmp'));self.ipc.chmod(0o700)
             self.report={'私有通信目录':str(self.ipc),'场景':name,'登录原因注入':login,'菜单偏好':menu,'步骤':[],'结果':'进行中'}
             result['场景'].append(self.report);save()
         def events(self):
@@ -85,7 +101,7 @@ def main():
                 time.sleep(0.05)
             raise RuntimeError(self.name+'：超时未观察到'+description)
         def launch(self):
-            args=['/usr/bin/open','-n','-g','--stdout',self.root/'标准输出.txt','--stderr',self.root/'标准错误.txt']
+            args=['/usr/bin/open','--arch',architecture,'-n','-g','--stdout',self.root/'标准输出.txt','--stderr',self.root/'标准错误.txt']
             for key,value in {'ROOT':str(self.ipc),'TOKEN':self.token,'LOGIN':str(self.login).lower(),'MENU':str(self.menu).lower()}.items():
                 args+=['--env','WRITEFLOW_WINDOW_PROBE_'+key+'='+value]
             command(args+[app])
@@ -108,6 +124,16 @@ def main():
             self.report['步骤'].append(step);save()
             if not matches_visible(event,expected) or event['activation_policy']!=policy or event['menu_preference']!=self.menu:
                 raise RuntimeError(name+'：实际内容窗/激活策略/菜单偏好不符')
+            if options.legacy_controller:
+                for window in event['windows']:
+                    role=window.get('role')
+                    if role not in {'main','diagnostics','settings'}:continue
+                    identity=window.get('instance')
+                    if not isinstance(identity,str) or not identity:raise RuntimeError('缺少真实窗口实例身份')
+                    if role in self.window_instances and self.window_instances[role]!=identity:
+                        raise RuntimeError(role+'窗口未复用同一生产控制器实例')
+                    self.window_instances[role]=identity
+                self.report['窗口实例身份']=dict(self.window_instances)
             confirmations=sum(e.get('event')=='request-foreground-confirmation' for e in self.events())
             step['前台确认请求次数']=confirmations
             if confirmations!=self.expected_confirmations:raise RuntimeError(name+'：委托前台确认请求次数不符')
@@ -119,7 +145,7 @@ def main():
             if minimized and not any(w.get('role')=='main' and w['miniaturized'] for w in event['windows']):
                 raise RuntimeError(name+'：主窗口没有真实最小化')
         def reopen(self):
-            command(['/usr/bin/open','-g',app]);self.expected_confirmations+=1;time.sleep(0.35)
+            command(['/usr/bin/open','--arch',architecture,'-g',app]);self.expected_confirmations+=1;time.sleep(0.35)
         def quit(self):
             self.action('quit')
             self.wait(lambda rows:next((e for e in rows if e.get('event')=='stop-monitoring'),None),'正常退出stop')
@@ -133,11 +159,13 @@ def main():
     active=None
     save()
     try:
-        command(['xcrun','swiftc','-target','arm64-apple-macos26.0','-swift-version','6','-warnings-as-errors',
-                 frozen/source.name,frozen/stub.name,'-o',binary])
+        command(['xcrun','swiftc','-target',architecture+'-apple-macos13.0','-swift-version','6','-warnings-as-errors',
+                 frozen/entry.name,frozen/compatibility.name,frozen/stub.name,'-o',binary])
         command(['/usr/bin/codesign','--force','--sign','-',app])
         command(['/usr/bin/codesign','--verify','--strict',app])
         result['测试可执行SHA256']=hashlib.sha256(binary.read_bytes()).hexdigest();save()
+        if options.build_only:
+            result['结果']='仅构建通过，未执行窗口验收';save();print(json.dumps({'结果':result['结果'],'证据':str(run),'应用':str(app),'架构':architecture},ensure_ascii=False));return 0
         for name,login,menu in [('普通启动及窗口边界',False,True),('已有辅助窗退出后后台启动',True,True),
                                ('菜单关闭的后台启动',True,False),('菜单关闭的普通启动',False,False)]:
             active=Session(name,login,menu);active.launch()
@@ -159,7 +187,7 @@ def main():
                 active.action('diagnostics');active.action('settings')
                 active.snapshot('带辅助窗口正常退出前',{'main','diagnostics','settings'})
             active.quit();active.report['结果']='通过';active=None;save()
-        result['结束时生产源码字节一致']=source.read_bytes()==production
+        result['结束时生产源码字节一致']=source.read_bytes()==production and compatibility.read_bytes()==bridge
         if not result['结束时生产源码字节一致']:raise RuntimeError('生产App源在运行期间发生变化')
         result['结果']='通过'
     except Exception as error:
@@ -168,7 +196,7 @@ def main():
             active.report.update(结果='未通过',错误=str(error))
             try:active.quit()
             except Exception as cleanup:result['独立测试应用退出错误']=str(cleanup)
-    result['边界']='登录原因和无磁盘模型为注入；未验生产ContentView、真实SMAppService登录事件/登记、真实AppModel启动磁盘工作。菜单关闭验证使用持久偏好并观察窗口行为，不以偏好值声称系统菜单图标视觉验收。'
+    result['边界']=('本模式在当前系统直接调用生产Legacy窗口控制器，未编译生产App委托；不代表13/14真实系统登录。' if options.legacy_controller else '')+'登录原因和无磁盘模型为注入；未验生产ContentView、真实SMAppService登录事件/登记、真实AppModel启动磁盘工作。菜单关闭验证使用持久偏好并观察窗口行为，不以偏好值声称系统菜单图标视觉验收。'
     save();print(json.dumps({'结果':result['结果'],'错误':result.get('错误'),'证据':str(run),'生产AppSHA256':result['生产AppSHA256']},ensure_ascii=False))
     return 0 if result['结果']=='通过' else 1
 

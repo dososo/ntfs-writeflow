@@ -25,7 +25,8 @@ extension AppModel {
         let consoleUID: uid_t? = hasPrimaryConsole && primaryUID != uid_t.max ? primaryUID : nil
         let windows = NSApp.windows.filter { $0.styleMask.contains(.titled) }
         let visible = windows.filter { $0.isVisible && !$0.isMiniaturized }
-        let knownRoles = ["main":"主窗口","diagnostics":"诊断","com_apple_SwiftUI_Settings_window":"设置"]
+        let knownRoles = ["main":"主窗口","diagnostics":"诊断","com_apple_SwiftUI_Settings_window":"设置",
+            "writeflow.main":"主窗口", "writeflow.diagnostics":"诊断", "writeflow.settings":"设置"]
         let launch = LoginLaunchService.lastLaunchContext
         let state = autoRuntime?.loginState?() ?? LoginLaunchService.state
         return [

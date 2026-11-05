@@ -72,7 +72,7 @@ struct VolumeDetailView: View {
                 if volume.isNTFS && volume.isInternal == false {
                     GroupBox("下次插入此盘") {
                         VStack(alignment: .leading, spacing: 10) {
-                            Picker("自动挂载", selection: Binding(get: { autoMode }, set: setAutoMode)) {
+                            Picker("自动挂载", selection: Binding(get: { autoMode }, set: { setAutoMode($0) })) {
                                 ForEach(AutoMountMode.allCases, id: \.self) { mode in
                                     Text(mode.title).tag(mode)
                                 }
@@ -127,7 +127,7 @@ struct VolumeDetailView: View {
                     Label("此卷仅供查看。本应用不会弹出内部卷或系统路径下的卷。", systemImage: "lock.shield")
                         .font(.callout).foregroundStyle(.secondary)
                 } else if volume.isNTFS {
-                    Label(volume.isMountedByWriteFlow ? "当前卷由 NTFS 畅写提供访问。卸载卷与弹出整盘是两个不同操作。" : "此处显示系统当前的访问状态。只有实际挂载类型为 blntfs 才由 NTFS 畅写提供访问。", systemImage: "info.circle")
+                    Label(volume.isMountedByWriteFlow ? "当前卷由 NTFS 畅写提供访问。卸载卷与弹出整盘是两个不同操作。" : "此处显示系统当前的访问状态。本应用根据实际文件系统来源及自有挂载凭据确认是否由 NTFS 畅写提供访问。", systemImage: "info.circle")
                         .font(.callout).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 8)

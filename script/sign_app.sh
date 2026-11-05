@@ -17,6 +17,9 @@ case "$CONFIGURATION" in
 esac
 SOURCE_APP="$ROOT_DIR/build/xcode/Build/Products/$CONFIGURATION/NTFSWorkbench.app"
 [[ -d "$SOURCE_APP" ]] || { echo '请先运行 script/build_and_run.sh --build-only。' >&2; exit 1; }
+python3 script/check_app_architecture.py --require-legacy --app "$SOURCE_APP" --arch "${NTFS_BUILD_ARCH:-universal}" \
+  --minimum-system "${NTFS_MINIMUM_SYSTEM:-13.0}" \
+  --extension-minimum-system "${NTFS_EXTENSION_MINIMUM_SYSTEM:-15.4}"
 mkdir -p build/signed
 OUTPUT_DIR="$(mktemp -d "$ROOT_DIR/build/signed/签名版本.XXXXXX")"
 APP="$OUTPUT_DIR/NTFSWorkbench.app"
@@ -26,6 +29,9 @@ HELPER="$APP/Contents/Library/HelperTools/NTFSWriteFlowMountHelper"
 [[ -f "$HELPER" ]] || { echo '构建物缺少挂载助手，停止签名。' >&2; exit 1; }
 codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" \
   --identifier com.blteam.ntfsworkbench.mount-helper "$HELPER"
+codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" \
+  --identifier com.blteam.ntfsworkbench.legacy --entitlements Configuration/Legacy.entitlements \
+  "$APP/Contents/Library/HelperTools/NTFSWriteFlowLegacy"
 cp "$PROFILE_PATH" "$EXTENSION/Contents/embedded.provisionprofile"
 python3 - "$PROFILE_PATH" "$OUTPUT_DIR/扩展权限.plist" "$OUTPUT_DIR/预期团队.txt" <<'PY'
 import pathlib,plistlib,subprocess,sys

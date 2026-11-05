@@ -8,6 +8,21 @@ private final class HandleReceiver: NSObject, PrivilegedMountProtocol, @unchecke
         self.expected = expected
         self.senderDescriptor = senderDescriptor
     }
+    func mountLegacy(_ request: Data, handle: FileHandle, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
+        DispatchQueue.global().async {
+            defer { try? handle.close() }
+            var status = stat()
+            let flags = fcntl(handle.fileDescriptor, F_GETFL)
+            guard request == Data("仅测试兼容句柄".utf8), flags >= 0, flags & O_ACCMODE == O_RDWR,
+                  fstat(handle.fileDescriptor, &status) == 0, status.st_mode & S_IFMT == S_IFCHR,
+                  let name = devname(status.st_rdev, S_IFCHR), String(cString: name) == "null" else {
+                reply(nil, "兼容入口请求或传输的普通字符设备句柄不符。")
+                return
+            }
+            reply(request, nil)
+        }
+    }
+
     func mount(_ request: Data, withReply reply: @escaping @Sendable (Data?, String?) -> Void) { reply(nil, "测试不挂载") }
     func prepareEject(_ request: Data, handles: [FileHandle], withReply reply: @escaping @Sendable (String?) -> Void) {
         DispatchQueue.global().async {
@@ -129,6 +144,19 @@ private final class TransferReply: @unchecked Sendable {
         check(fcntl(rootDescriptor, F_GETFL) >= 0, "数组接收端关闭副本不得关闭原始句柄")
         try PrivilegedMountEngine.validateUnmountDescriptor(rootDescriptor, expected: root)
         count += 1
+        let nullDescriptor = open("/dev/null", O_RDWR | O_NOFOLLOW | O_CLOEXEC)
+        check(nullDescriptor >= 0, "仅打开无磁盘的普通字符设备")
+        let nullHandle = FileHandle(fileDescriptor: nullDescriptor, closeOnDealloc: true)
+        defer { try? nullHandle.close() }
+        let legacyReply = TransferReply()
+        let legacyProxy = connection.remoteObjectProxyWithErrorHandler { legacyReply.finish($0.localizedDescription) } as! PrivilegedMountProtocol
+        let legacyData = Data("仅测试兼容句柄".utf8)
+        legacyProxy.mountLegacy(legacyData, handle: nullHandle) { data, error in
+            legacyReply.finish(error ?? (data == legacyData ? nil : "请求字节未完整往返"))
+        }
+        check(legacyReply.semaphore.wait(timeout: .now() + 10) == .success, "新增兼容入口必须收到真实XPC回复")
+        check(legacyReply.error == nil, "兼容句柄传输失败：\(legacyReply.error ?? "")")
+        check(fcntl(nullDescriptor, F_GETFL) & O_ACCMODE == O_RDWR, "兼容接收端关闭副本不得关闭发送端原句柄")
         withExtendedLifetime(delegate) {}
         let report: [String: Any] = ["结果": "通过", "数量": count,
             "范围": "真实匿名NSXPC文件句柄及数组传输、异步强持有、独立关闭、目录/根路径/实例/事件标志拒绝；未注册服务、未同步或卸载文件系统、未操作设备。"]

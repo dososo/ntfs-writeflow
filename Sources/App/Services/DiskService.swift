@@ -46,8 +46,17 @@ actor DiskService {
         guard VolumeRecord.validDeviceID(identifier) else {
             throw DiskOperationError(message: "设备标识无效。")
         }
-        let info = try dictionary(run(["info", "-plist", identifier]))
-        let mounted = (info["MountPoint"] as? String).flatMap { MountedFileSystemReader.read(path: $0) }
+        var info = try dictionary(run(["info", "-plist", identifier]))
+        var mounted = (info["MountPoint"] as? String).flatMap { MountedFileSystemReader.read(path: $0) }
+        if mounted == nil {
+            let kernel = try MountedFileSystemReader.deviceMounts(identifier)
+            guard kernel.count <= 1 else { throw DiskOperationError(message: "同一设备存在多个系统挂载，已停止操作。") }
+            if let actual = kernel.first {
+                mounted = actual
+                info["MountPoint"] = actual.mountPoint
+                info["WritableVolume"] = !actual.isReadOnly
+            }
+        }
         guard let record = VolumeRecord(info: info), let session,
               let binding = RetainedDiskBinding(session: session, expected: record) else {
             return VolumeRecord(info: info, mountedFileSystem: mounted)
@@ -71,11 +80,19 @@ actor DiskService {
             throw DiskOperationError(message: "系统未确认介质可写，只能请求只读挂载。")
         }
         try binding.validateMediaIdentity(expected)
-        if access("/dev/r\(expected.id)", readOnly ? R_OK : R_OK | W_OK) != 0 {
-            let result = try await PrivilegedMountClient.mount(PrivilegedMountRequest(
-                deviceID: expected.id, mediaRegistryID: mediaID,
-                wholeMediaRegistryID: wholeMediaID,
-                mediaByteCount: expected.mediaByteCount, readOnly: readOnly))
+        if StorageBackend.requiresManagedMount || access("/dev/r\(expected.id)", readOnly ? R_OK : R_OK | W_OK) != 0 {
+            let request = PrivilegedMountRequest(deviceID: expected.id, mediaRegistryID: mediaID,
+                wholeMediaRegistryID: wholeMediaID, mediaByteCount: expected.mediaByteCount, readOnly: readOnly)
+            let result: PrivilegedMountResult
+            if StorageBackend.current == .macFUSE {
+                try PrivilegedMountClient.requireEnabled()
+                let handle = try await AuthorizedDeviceHandle.openVolume(deviceID: expected.id, readOnly: readOnly)
+                defer { try? handle.close() }
+                try binding.validateMediaIdentity(expected)
+                result = try await PrivilegedMountClient.mountLegacy(request, handle: handle)
+            } else {
+                result = try await PrivilegedMountClient.mount(request)
+            }
             guard let mounted = try record(expected.id), expected.matchesMediaIdentity(of: mounted),
                   mounted.mountPoint == result.mountPoint, mounted.isMountedByWriteFlow,
                   mounted.mountedFileSystem?.ownerID == 0,
@@ -127,6 +144,9 @@ actor DiskService {
             }
             return
         }
+        guard #available(macOS 26.0, *) else {
+            throw DiskOperationError(message: "旧系统只允许卸载本应用管理员服务建立的专用挂载；其他卷请用原工具正常卸载。")
+        }
         guard before.ownerID == geteuid() else {
             throw DiskOperationError(message: "该挂载不属于当前用户的受管挂载，已停止卸载。")
         }
@@ -147,7 +167,7 @@ actor DiskService {
     static func synchronizeAndUnmount(
         descriptor: Int32,
         synchronize: (Int32) -> Int32 = { fsync($0) },
-        dismount: (Int32, Int32) -> Int32 = { funmount($0, $1) }
+        dismount: (Int32, Int32) -> Int32 = DiskService.unmountDescriptor
     ) throws {
         guard synchronize(descriptor) == 0 else {
             let code = errno
@@ -158,6 +178,12 @@ actor DiskService {
             let code = errno
             throw DiskOperationError(message: "卷未卸载（\(code)）：\(String(cString: strerror(code)))。请保存文件并关闭占用程序后重试；不会强制卸载。")
         }
+    }
+
+    nonisolated static func unmountDescriptor(_ descriptor: Int32, _ flags: Int32) -> Int32 {
+        if #available(macOS 26.0, *) { return funmount(descriptor, flags) }
+        errno = ENOTSUP
+        return -1
     }
 
     private func makeMountPoint() throws -> String {

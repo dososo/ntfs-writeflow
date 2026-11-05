@@ -21,6 +21,12 @@ enum PrivilegedMountClient {
         return try JSONDecoder().decode(PrivilegedMountResult.self, from: reply)
     }
 
+    static func mountLegacy(_ request: PrivilegedMountRequest, handle: FileHandle) async throws -> PrivilegedMountResult {
+        let data = try JSONEncoder().encode(request)
+        let reply = try await call { service, finish in service.mountLegacy(data, handle: handle, withReply: finish) }
+        return try JSONDecoder().decode(PrivilegedMountResult.self, from: reply)
+    }
+
     static func unmount(token: String, handle: FileHandle) async throws {
         _ = try await call { service, finish in
             service.unmount(token, handle: handle) { error in finish(Data(), error) }
