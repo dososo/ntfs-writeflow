@@ -5,14 +5,18 @@ import IOKit
 
 enum HelperCommand {
     static func mountInvocation(_ request: PrivilegedMountRequest, userID: UInt32, token: String) throws -> (String, [String]) {
+        ("/bin/launchctl", ["asuser", String(userID), "/sbin/mount"] +
+            (try systemMountArguments(request, userID: userID, token: token)))
+    }
+
+    static func systemMountArguments(_ request: PrivilegedMountRequest, userID: UInt32, token: String) throws -> [String] {
         guard userID >= 501, userID != UInt32.max, UUID(uuidString: token)?.uuidString == token,
               VolumeRecord.validDeviceID(request.deviceID), request.mediaRegistryID > 0 else {
             throw HelperFailure(message: "挂载调用参数无效。")
         }
         let path = PrivilegedMountConfiguration.namespace + "/\(userID)/\(token)/volume"
         let options = "\(request.readOnly ? "ro" : "rw"),nosuid,nodev,noowners,nobrowse,writeflow-media-id=\(request.mediaRegistryID)"
-        return ("/bin/launchctl", ["asuser", String(userID), "/sbin/mount",
-                "-F", "-t", "blntfs", "-o", options, "/dev/\(request.deviceID)", path])
+        return ["-F", "-t", "blntfs", "-o", options, "/dev/\(request.deviceID)", path]
     }
 
     static func environment(for executable: String, mountUserID: UInt32? = nil) throws -> [String: String] {
@@ -48,6 +52,116 @@ enum HelperCommand {
             throw HelperFailure(message: "系统操作失败（\(process.terminationStatus)）：\(String(decoding: data.prefix(1200), as: UTF8.self))")
         }
         return data
+    }
+
+    struct Uncertain: LocalizedError {
+        let processID: Int32
+        var errorDescription: String? { "挂载子进程状态未知（PID \(processID)），已保留凭据；请刷新检查后正常卸载，不能视为取消完成。" }
+    }
+
+    // 仅新身份桥使用。普通文件避免后代持有Pipe使EOF等待无界；超时不等于挂载已取消。
+    static func runBridge(_ executable: String, _ arguments: [String], timeout: TimeInterval = 30) throws -> Data {
+        var template = Array("/private/tmp/NTFSWriteFlow-mount-output.XXXXXX".utf8CString)
+        let descriptor = mkstemp(&template)
+        guard descriptor >= 0 else { throw HelperFailure(message: "无法准备挂载输出文件。") }
+        defer { close(descriptor) }
+        let path = String(decoding: template.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+        guard unlink(path) == 0 else { throw HelperFailure(message: "无法移除挂载输出临时路径。") }
+        guard fchmod(descriptor, 0o600) == 0, fcntl(descriptor, F_SETFD, FD_CLOEXEC) == 0 else {
+            throw HelperFailure(message: "无法保护挂载输出文件。")
+        }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        process.environment = try environment(for: executable)
+        process.currentDirectoryURL = URL(fileURLWithPath: "/")
+        process.standardInput = FileHandle.nullDevice
+        let output = FileHandle(fileDescriptor: descriptor, closeOnDealloc: false)
+        process.standardOutput = output; process.standardError = output
+        do { try process.run() }
+        catch { throw Uncertain(processID: 0) }
+        let deadline = ProcessInfo.processInfo.systemUptime + timeout
+        while process.isRunning {
+            if ProcessInfo.processInfo.systemUptime >= deadline {
+                if process.isRunning { process.terminate() }
+                throw Uncertain(processID: process.processIdentifier)
+            }
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        var bytes = [UInt8](repeating: 0, count: 64 * 1024)
+        var received: Int
+        repeat { received = pread(descriptor, &bytes, bytes.count, 0) } while received < 0 && errno == EINTR
+        guard received >= 0 else { throw Uncertain(processID: process.processIdentifier) }
+        let data = Data(bytes.prefix(received))
+        guard process.terminationReason == .exit else { throw Uncertain(processID: process.processIdentifier) }
+        guard process.terminationStatus == 0 else {
+            throw HelperFailure(message: "系统操作失败（\(process.terminationStatus)）：\(String(decoding: data.prefix(1200), as: UTF8.self))")
+        }
+        return data
+    }
+}
+
+enum FSKitMountBridge {
+    static let mode = "--internal-fskit-mount"
+
+    static func mustPreserveTicket(commandSucceeded: Bool, error: Error) -> Bool {
+        commandSucceeded || error is HelperCommand.Uncertain
+    }
+
+    static func isRequired(on version: OperatingSystemVersion = ProcessInfo.processInfo.operatingSystemVersion) -> Bool {
+        version.majorVersion < 26 && (version.majorVersion > 15 ||
+            (version.majorVersion == 15 && version.minorVersion >= 4))
+    }
+
+    static func arguments(for ticket: HelperTicket) throws -> [String] {
+        let request = ticket.request
+        _ = try HelperCommand.systemMountArguments(request, userID: ticket.userID, token: ticket.token)
+        guard request.wholeMediaRegistryID > 0, request.mediaByteCount > 0, ticket.fileSystemIdentity == nil else {
+            throw HelperFailure(message: "内部挂载凭据无效或已用于其他挂载。")
+        }
+        return [mode, String(ticket.userID), ticket.token, request.deviceID, String(request.mediaRegistryID),
+                String(request.wholeMediaRegistryID), String(request.mediaByteCount), request.readOnly ? "ro" : "rw"]
+    }
+
+    static func parse(_ arguments: [String], on version: OperatingSystemVersion = ProcessInfo.processInfo.operatingSystemVersion) throws -> HelperTicket {
+        guard isRequired(on: version), arguments.count == 8, arguments[0] == mode,
+              let userID = UInt32(arguments[1]), String(userID) == arguments[1],
+              let mediaID = UInt64(arguments[4]), String(mediaID) == arguments[4],
+              let wholeID = UInt64(arguments[5]), String(wholeID) == arguments[5],
+              let size = Int64(arguments[6]), String(size) == arguments[6],
+              ["ro", "rw"].contains(arguments[7]) else { throw HelperFailure(message: "内部挂载模式参数或系统版本不适用。") }
+        let request = PrivilegedMountRequest(deviceID: arguments[3], mediaRegistryID: mediaID,
+            wholeMediaRegistryID: wholeID, mediaByteCount: size, readOnly: arguments[7] == "ro")
+        let ticket = HelperTicket(userID: userID, token: arguments[2], request: request)
+        _ = try self.arguments(for: ticket)
+        return ticket
+    }
+
+    static func invocation(for ticket: HelperTicket) throws -> (String, [String]) {
+        let path = try LegacyRuntime.mountHelperCachePath(userID: ticket.userID, token: ticket.token)
+        return ("/bin/launchctl", ["asuser", String(ticket.userID), path] + (try arguments(for: ticket)))
+    }
+
+    static func execute(_ arguments: [String]) throws -> Never {
+        guard getuid() == 0, geteuid() == 0 else { throw HelperFailure(message: "内部挂载模式仅允许管理员服务启动。") }
+        let ticket = try parse(arguments)
+        try LegacyRuntime.verifyCurrentMountHelper(userID: ticket.userID, token: ticket.token)
+        let namespace = try HelperNamespace(userID: ticket.userID)
+        try HelperNamespace.UnmountLease.verifyTicket(namespace.load(ticket.token), expected: ticket)
+        let media = try HelperMedia(ticket.request)
+        guard media.volume.mountPoint == nil, try MountedFileSystemReader.deviceMounts(ticket.request.deviceID).isEmpty,
+              ticket.request.readOnly || media.volume.writableMedia == true else {
+            throw HelperFailure(message: "介质已有挂载或未确认可写，内部模式已停止。")
+        }
+        let mount = try HelperCommand.systemMountArguments(ticket.request, userID: ticket.userID, token: ticket.token)
+        try media.validate(ticket.request)
+        // 这里是重新exec后的独立进程；父daemon的线程、凭据和XPC监听均不改变。
+        let result = mount[4].withCString { options in
+            mount[5].withCString { device in
+                mount[6].withCString { path in writeflow_exec_fskit_mount(ticket.userID, options, device, path) }
+            }
+        }
+        throw HelperFailure(message: "内部挂载身份转换或固定程序启动失败（\(result)）。")
     }
 }
 

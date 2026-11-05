@@ -19,13 +19,26 @@ final class PrivilegedMountEngine: @unchecked Sendable {
             throw HelperFailure(message: "介质已由其他工具挂载或未确认可写，不会自动接管。")
         }
         let namespace = try HelperNamespace(userID: userID)
+        let usesBridge = FSKitMountBridge.isRequired()
+        if usesBridge { try namespace.requireNoPendingBridgeMount(for: request) }
         var ticket = try namespace.create(request)
         let path = try namespace.mountPoint(ticket.token)
+        var bridgeCommandSucceeded = false
         do {
             try media.validate(request)
-            // 子进程采用可信用户登录会话，并用 SUDO_UID 分离扩展发现与 root 设备访问。
-            let invocation = try HelperCommand.mountInvocation(request, userID: userID, token: ticket.token)
-            _ = try HelperCommand.run(invocation.0, invocation.1, mountUserID: userID)
+            if usesBridge {
+                let runtime = try namespace.runtimeDirectory(for: ticket)
+                defer { close(runtime) }
+                _ = try LegacyRuntime.prepareMountHelper(in: runtime, userID: userID, token: ticket.token)
+                try media.validate(request)
+                let invocation = try FSKitMountBridge.invocation(for: ticket)
+                _ = try HelperCommand.runBridge(invocation.0, invocation.1)
+                bridgeCommandSucceeded = true
+            } else {
+                // 26及以上由系统mount处理SUDO_UID；不改变多线程助手的凭据。
+                let invocation = try HelperCommand.mountInvocation(request, userID: userID, token: ticket.token)
+                _ = try HelperCommand.run(invocation.0, invocation.1, mountUserID: userID)
+            }
             let mounted = try verifiedMount(ticket, namespace: namespace)
             ticket.fileSystemIdentity = mounted.identity
             try namespace.save(ticket)
@@ -35,7 +48,10 @@ final class PrivilegedMountEngine: @unchecked Sendable {
             return try JSONEncoder().encode(result(ticket, path: path, mounted: mounted))
         } catch {
             // 系统命令失败也可能已产生挂载；此时保留凭据供同一用户查询和正常卸载。
-            if MountedFileSystemReader.read(path: path) == nil { try? namespace.discardUnmounted(ticket.token) }
+            let preserve = usesBridge && FSKitMountBridge.mustPreserveTicket(commandSucceeded: bridgeCommandSucceeded, error: error)
+            if !preserve, MountedFileSystemReader.read(path: path) == nil {
+                try? namespace.discardUnmounted(ticket.token)
+            }
             throw error
         }
     }

@@ -11,6 +11,7 @@ enum LegacyRuntime {
     static let libraryPath = "/usr/local/lib/libfuse.2.dylib"
     static let bundlePath = "/Library/Filesystems/macfuse.fs"
     static let maximumLibrarySize: Int64 = 32 * 1024 * 1024
+    static let mountHelperName = "NTFSWriteFlowMountHelper"
 
     static func verifySignature(at path: String) throws {
         try verifySignature(at: path, requirement: "anchor apple generic and certificate leaf[subject.OU] = \"3T5GSNBU6W\"")
@@ -20,6 +21,10 @@ enum LegacyRuntime {
         try verifySignature(at: path, requirement: "anchor apple generic and certificate leaf[subject.OU] = \"ALV8Y54GCY\" and identifier \"com.blteam.ntfsworkbench.legacy\"")
     }
 
+    static func verifyMountHelperSignature(at path: String) throws {
+        try verifySignature(at: path, requirement: PrivilegedMountConfiguration.helperRequirement)
+    }
+
     private static func verifySignature(at path: String, requirement expression: String) throws {
         var code: SecStaticCode?, requirement: SecRequirement?
         let flags = SecCSFlags(rawValue: kSecCSStrictValidate | kSecCSCheckAllArchitectures | kSecCSCheckNestedCode)
@@ -27,7 +32,7 @@ enum LegacyRuntime {
               let requirement,
               SecStaticCodeCreateWithPath(URL(fileURLWithPath: path) as CFURL, [], &code) == errSecSuccess,
               let code, SecStaticCodeCheckValidity(code, flags, requirement) == errSecSuccess else {
-            throw Failure(message: "旧后端代码签名、团队或程序标识无效，已停止操作。")
+            throw Failure(message: "代码签名、团队或程序标识无效，已停止操作。")
         }
     }
 
@@ -92,6 +97,62 @@ enum LegacyRuntime {
         defer { close(file) }
         return try prepareSignedCopy(source: file, in: directoryFD, userID: userID, token: token,
                                      name: "NTFSWriteFlowLegacy", verify: verifyExecutableSignature(at:))
+    }
+
+    static func mountHelperCachePath(userID: UInt32, token: String) throws -> String {
+        let library = try cachePath(userID: userID, token: token)
+        return String(library.dropLast("libfuse.2.dylib".count)) + mountHelperName
+    }
+
+    static func currentExecutablePath() throws -> String {
+        var characters = [CChar](repeating: 0, count: Int(PATH_MAX))
+        guard proc_pidpath(getpid(), &characters, UInt32(characters.count)) > 0 else {
+            throw Failure(message: "无法确认当前管理员服务程序位置。")
+        }
+        return String(decoding: characters.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+    }
+
+    static func prepareMountHelper(in directoryFD: Int32, userID: UInt32, token: String) throws -> String {
+        guard getuid() == 0, geteuid() == 0 else { throw Failure(message: "仅管理员服务能准备root私有助手副本。") }
+        try validateCacheDirectory(directoryFD, userID: userID, token: token)
+        // 源路径只能来自当前进程，不接受调用方或XPC提供的源文件。
+        let source = open(try currentExecutablePath(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
+        guard source >= 0 else { throw Failure(message: "无法安全打开当前管理员服务程序。") }
+        defer { close(source) }
+        return try prepareSignedCopy(source: source, in: directoryFD, userID: userID, token: token,
+                                     name: mountHelperName, verify: verifyMountHelperSignature(at:))
+    }
+
+    static func verifyCurrentMountHelper(userID: UInt32, token: String) throws {
+        let expected = try mountHelperCachePath(userID: userID, token: token)
+        guard try currentExecutablePath() == expected else { throw Failure(message: "内部挂载模式只能从原凭据的root私有助手副本启动。") }
+        let parent = open(String(expected.dropLast(mountHelperName.count + 1)), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard parent >= 0 else { throw Failure(message: "无法打开内部挂载程序的保护目录。") }
+        defer { close(parent) }
+        try validateCacheDirectory(parent, userID: userID, token: token)
+        let file = openat(parent, mountHelperName, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
+        guard file >= 0 else { throw Failure(message: "无法核验内部挂载程序副本。") }
+        defer { close(file) }
+        let held = try fileStatus(file)
+        var entry = stat()
+        guard fstatat(parent, mountHelperName, &entry, AT_SYMLINK_NOFOLLOW) == 0 else {
+            throw Failure(message: "无法确认内部挂载程序路径身份。")
+        }
+        try verifyMountHelperFile(held, entry: entry)
+        try verifyACL(file, empty: true)
+        try verifyMountHelperSignature(at: expected)
+        try validateCacheDirectory(parent, userID: userID, token: token)
+        guard fstatat(parent, mountHelperName, &entry, AT_SYMLINK_NOFOLLOW) == 0,
+              held.st_dev == entry.st_dev, held.st_ino == entry.st_ino else {
+            throw Failure(message: "内部挂载程序副本验签后身份已变化。")
+        }
+    }
+
+    static func verifyMountHelperFile(_ held: stat, entry: stat) throws {
+        guard held.st_uid == 0, held.st_mode & S_IFMT == S_IFREG, held.st_mode & 0o7777 == 0o500,
+              held.st_nlink == 1, held.st_dev == entry.st_dev, held.st_ino == entry.st_ino else {
+            throw Failure(message: "内部挂载程序副本的所有权、权限或文件身份不符。")
+        }
     }
 
     private static func prepareSignedCopy(source: Int32, in directoryFD: Int32, userID: UInt32, token: String,

@@ -112,16 +112,8 @@ final class HelperNamespace {
     func mediaLease(for request: PrivilegedMountRequest) throws -> FileHandle {
         guard geteuid() == 0 else { throw HelperFailure(message: "媒体租约需要管理员服务。") }
         let name = try Self.mediaLockName(for: request)
-        let base = openat(descriptor, "..", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
-        guard base >= 0 else { throw HelperFailure(message: "无法打开受保护媒体租约父目录。") }
+        let base = try protectedBaseDirectory()
         defer { close(base) }
-        try Self.verifyDirectory(base, permissions: 0o755)
-        try Self.verifyACL(base, allowedUser: nil)
-        var path = [CChar](repeating: 0, count: Int(PATH_MAX))
-        guard fcntl(base, F_GETPATH, &path) == 0,
-              String(decoding: path.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self) == PrivilegedMountConfiguration.namespace else {
-            throw HelperFailure(message: "媒体租约父目录不再属于固定系统命名空间。")
-        }
         let folder = try Self.directory(parent: base, name: "media-leases", permissions: 0o700)
         defer { close(folder) }
         var file = openat(folder, name, O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
@@ -147,6 +139,66 @@ final class HelperNamespace {
             // 不删除或截断锁文件，防止新inode绕过仍由子进程持有的锁。
             return FileHandle(fileDescriptor: file, closeOnDealloc: true)
         } catch { close(file); throw error }
+    }
+
+    private func protectedBaseDirectory() throws -> Int32 {
+        let base = openat(descriptor, "..", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard base >= 0 else { throw HelperFailure(message: "无法打开受保护媒体租约父目录。") }
+        do {
+            try Self.verifyDirectory(base, permissions: 0o755)
+            try Self.verifyACL(base, allowedUser: nil)
+            var path = [CChar](repeating: 0, count: Int(PATH_MAX))
+            guard fcntl(base, F_GETPATH, &path) == 0,
+                  String(decoding: path.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self) == PrivilegedMountConfiguration.namespace else {
+                throw HelperFailure(message: "媒体租约父目录不再属于固定系统命名空间。")
+            }
+            return base
+        } catch { close(base); throw error }
+    }
+
+    static func bridgeNamespaceUserID(_ name: String) throws -> UInt32? {
+        if name == "media-leases" { return nil }
+        guard let userID = UInt32(name), userID >= 501, userID != .max, String(userID) == name else {
+            throw HelperFailure(message: "系统挂载命名空间包含未知条目，已停止新挂载。")
+        }
+        return userID
+    }
+
+    static func bridgeTokens(from entries: Set<String>) throws -> [String] {
+        for token in entries { try validateToken(token) }
+        return entries.sorted()
+    }
+
+    static func requireNoPendingBridgeTicket(_ ticket: HelperTicket, wholeMediaRegistryID: UInt64) throws {
+        _ = try HelperCommand.systemMountArguments(ticket.request, userID: ticket.userID, token: ticket.token)
+        guard wholeMediaRegistryID > 0, ticket.request.wholeMediaRegistryID > 0, ticket.request.mediaByteCount > 0,
+              ticket.fileSystemIdentity != "" else { throw HelperFailure(message: "既存挂载凭据异常，已停止新挂载。") }
+        guard ticket.request.wholeMediaRegistryID != wholeMediaRegistryID || ticket.fileSystemIdentity != nil else {
+            throw HelperFailure(message: "同一整盘存在尚未确认结果的挂载票据，已停止重复操作；请先刷新并由维护者核验，不能按当前未显示挂载自动清理。")
+        }
+    }
+
+    func requireNoPendingBridgeMount(for request: PrivilegedMountRequest) throws {
+        let base = try protectedBaseDirectory()
+        defer { close(base) }
+        for name in try Self.directoryEntries(base).sorted() {
+            guard let owner = try Self.bridgeNamespaceUserID(name) else {
+                let locks = try Self.directory(parent: base, name: name, permissions: 0o700, create: false)
+                close(locks)
+                continue
+            }
+            let area = try HelperNamespace(userID: owner)
+            for token in try Self.bridgeTokens(from: Self.directoryEntries(area.descriptor)) {
+                let folder = try area.tokenDirectory(token)
+                defer { close(folder) }
+                let entries = try Self.directoryEntries(folder)
+                guard entries.contains("ticket.json"), entries.contains("volume"),
+                      entries.isSubset(of: ["ticket.json", "volume", "runtime"]) else {
+                    throw HelperFailure(message: "既存凭据目录包含未知或缺失条目，已停止新挂载。")
+                }
+                try Self.requireNoPendingBridgeTicket(area.load(token), wholeMediaRegistryID: request.wholeMediaRegistryID)
+            }
+        }
     }
 
     static func mediaLockName(for request: PrivilegedMountRequest) throws -> String {
@@ -249,7 +301,7 @@ final class HelperNamespace {
         try verifyDirectoryStatus(inspect(runtime), permissions: 0o700)
         try verifyACL(runtime, allowedUser: nil)
         let entries = try directoryEntries(runtime)
-        guard entries.isSubset(of: ["libfuse.2.dylib", "NTFSWriteFlowLegacy"]) else {
+        guard entries.isSubset(of: ["libfuse.2.dylib", "NTFSWriteFlowLegacy", "NTFSWriteFlowMountHelper"]) else {
             throw HelperFailure(message: "运行时目录包含未知条目，保留挂载凭据。")
         }
         var files: [Int32] = []
@@ -265,7 +317,7 @@ final class HelperNamespace {
             }
             try verifyACL(file, allowedUser: nil)
         }
-        // 两个固定文件全部核验成功后才删除，异常时不先损失另一缓存。
+        // 固定文件全部核验成功后才删除，异常时不先损失另一缓存。
         for name in entries.sorted() {
             guard unlinkat(runtime, name, 0) == 0 else {
                 throw HelperFailure(message: "运行时缓存文件未清理，保留挂载凭据。")
