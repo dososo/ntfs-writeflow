@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>NTFS 畅写 · 产品介绍片</title>
-<meta name="description" content="NTFS 畅写（NTFS WriteFlow）产品介绍片：真实录屏演示只读挂载、读写挂载、Finder 文件操作、重挂复读与安全弹出整盘。" />
+<title>NTFS 畅写 · 兼容预览与产品介绍</title>
+<meta name="description" content="NTFS 畅写0.3.1候选验收中：修正挂载发现与原生只读、准确写入状态、窗口可达、虚拟机提示及特殊项与未知事务保护。当前下载0.3.0通用包，产品影片展示0.1.1历史版本。" />
 <meta property="og:title" content="NTFS 畅写 · 产品介绍" />
 <meta property="og:image" content="https://dososo.github.io/ntfs-writeflow/ntfs-writeflow-short-poster.jpg" />
 <link rel="icon" href="logo.png" />
@@ -26,6 +26,7 @@
   .actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 18px 0 8px; }
   .btn { display: inline-flex; align-items: center; gap: 8px; padding: 11px 18px; border-radius: 999px; text-decoration: none; font-size: 15px; font-weight: 600; color: var(--paper); box-shadow: inset 0 0 0 1px var(--line); }
   .btn.primary { background: var(--teal); color: #04121F; box-shadow: none; }
+  .btn.pending { border: 0; background: rgba(157,179,214,.12); color: var(--muted); cursor: not-allowed; }
   .facts { color: var(--muted); font-size: 14px; line-height: 1.8; margin-top: 18px; border-top: 1px solid var(--line); padding-top: 18px; }
   .facts b { color: var(--paper); font-weight: 600; }
   .en { margin-top: 18px; color: var(--muted); font-size: 13px; line-height: 1.7; }
@@ -38,7 +39,7 @@
     <img src="logo.png" alt="NTFS 畅写图标" />
     <div>
       <h1>NTFS 畅写 · 产品介绍</h1>
-      <div class="sub">0.3.0 兼容预览 · Intel 与 Apple Silicon 通用包</div>
+      <div class="sub">0.3.1 候选验收中 · 当前下载为 0.3.0 通用包</div>
     </div>
   </header>
 
@@ -50,18 +51,35 @@
   </div>
 
 
+  <div class="actions" data-future-release-url="https://github.com/dososo/ntfs-writeflow/releases/tag/v0.3.1">
+    <button class="btn pending" type="button" disabled data-future-download-url="https://github.com/dososo/ntfs-writeflow/releases/download/v0.3.1/NTFS-WriteFlow-0.3.1-universal.dmg">0.3.1 通用 DMG（待发布）</button>
+    <button class="btn pending" type="button" disabled data-future-download-url="https://github.com/dososo/ntfs-writeflow/releases/download/v0.3.1/NTFS-WriteFlow-0.3.1-universal.zip">0.3.1 通用 ZIP（待发布）</button>
+  </div>
+  <p class="sub2">0.3.1尚未发布，15.4完整VFS与最终分发核验仍待完成。上方候选按钮暂不可用；下方保留已发布版本与历史影片下载。</p>
+
   <div class="actions">
     <a class="btn primary" href="https://github.com/dososo/ntfs-writeflow/releases/download/v0.3.0/NTFS-WriteFlow-0.3.0-universal.dmg">下载 0.3.0 通用应用（DMG）</a>
     <a class="btn" href="https://github.com/dososo/ntfs-writeflow/releases/download/v0.1.1/NTFS-WriteFlow-0.1.1-intro-36s-1080p.mp4">下载 36 秒介绍片</a>
     <a class="btn" href="https://github.com/dososo/ntfs-writeflow">GitHub 仓库与源码</a>
   </div>
 
+  <h2 class="h2">0.3.1 本轮五项变化（候选）</h2>
+  <ul class="sub2">
+    <li><b>挂载发现与原生只读：</b>修正15.4扩展发现及独立用户身份桥接；15.4～26.3只读使用系统原生NTFS，读写FSKit；26.4起两种模式均FSKit。自动管理仍要求明确启用。</li>
+    <li><b>准确显示写入状态：</b>旧系统受管FSKit读写增加本次挂载内部准备证明；缺少证明显示“写入未就绪”。被动刷新重新核对当前实例，不沿用迟到旧证明。</li>
+    <li><b>设置与诊断可达：</b>长说明及底部配置、刷新、导出按钮可滚动触达；13.7.4／14.0／15.4已有真实操作和诊断保存／读回。</li>
+    <li><b>虚拟机限制明确说明：</b>Apple虚拟机13～15.3不支持macFUSE内核路径时，前台与助手明确拒绝，不把运行库就绪当可挂载；15.4起不按此规则禁用。</li>
+    <li><b>特殊项与未知事务保护：</b>不支持Interix字符／块设备、FIFO与socket；同整盘未决挂载票据阻止重复请求，超时／未知结果保留现场，不以挂载点消失代替完成。</li>
+  </ul>
+
   <div class="facts">
-    <b>0.3.0 兼容预览</b> · Intel 与 Apple Silicon · macOS 13 及以上 · 免费开源（GPL-2.0）<br />
+    <b>0.3.0 已有能力</b> · Intel 与 Apple Silicon通用包 · 最低macOS13 · 免费开源（GPL-2.0）<br />
     15.4及以上使用FSKit；13～15.3需用户自行安装并批准官方macFUSE，Apple Silicon可能需要按官方流程调整启动安全。运行库和驱动不随应用分发。<br />
-    根据用户反馈新增旧系统实际后端、通用包与卸载写回回执，保留逐盘策略、登录后台管理与会话保护；自动管理默认关闭。<a href="https://github.com/dososo/ntfs-writeflow/blob/v0.3.0/发布/0.3.0兼容预览发行说明.md">完整更新、支持矩阵与安装限制</a><br />
-    影片展示0.1.1历史版本，不是0.3.0全平台验收录像。片中操作为真实录屏：演示卷是当时新建的 NTFS 磁盘镜像；演示机已提前安装并完成系统授权，不代表全新 Mac 首次安装流程。等待过程已加速并在画面中标注。<br />
-    本轮通过ARM／Rosetta真实文件镜像回调、故障注入、官方库解析与完整源码离线重建；Intel硬件、旧系统内核挂载、实体接入、Windows、掉电和长期压力仍待验。Rosetta与模拟不替代实机。<br />
+    通用包、旧系统实际后端与卸载写回回执已在0.3.0交付，本轮不重复列为新增。逐盘策略、登录后台管理与会话保护继续保留，自动管理默认关闭。<a href="https://github.com/dososo/ntfs-writeflow/blob/v0.3.0/发布/0.3.0兼容预览发行说明.md">0.3.0完整更新、支持矩阵与安装限制</a><br />
+    0.3.1候选的系统原生只读不经过NTFS-3G，FSKit与macFUSE共用该引擎。15.4～26.3所有RO／RW请求经管理员服务；26.0～26.3 RW系统命令和可信SUDO_UID发现方式保持，26及以上funmount保留。公开requestedMountOptions到26.4才可用，26.0～26.3只有策略／模拟回归，未在对应实际系统通过。<br />
+    原生只读69项、身份桥接72项、受管发现85项及完整核心／模型回归两架构通过，同整盘未决事务组合经独立审查闭环；真实引擎与普通FSVolume测试通过。15.4旧候选实际写入EIO、正常卸载失败；新握手与状态修复已通过双架构开发回归，预检拒绝保RO及先同步后卸载已完成开发回归与独立审查，新候选构建签名通过，完整链尚未通过。旧FSKit读写的nosuid／nodev／nobrowse未全部保留；拒绝特殊项、不呈现setuid／setgid不代表内核安全标志生效。<br />
+    影片展示0.1.1历史版本，不是本轮候选全平台验收录像。片中操作为真实录屏：演示卷是当时新建的 NTFS 磁盘镜像；演示机已提前安装并完成系统授权，不代表全新 Mac 首次安装流程。等待过程已加速并在画面中标注。<br />
+    0.3.0已有ARM／Rosetta文件镜像回调、故障注入、官方库解析与源码离线重建证据。本轮13.7.4／14.0客体完成安装与界面分项，但兼容内核不可用，真实VFS读写未通过。CI来源客体初始SIP disabled、Gatekeeper enabled，不能作为默认安全实体机结论。Intel硬件、实体兼容后端、Windows、掉电和长期压力仍待验；Rosetta不替代Intel实机。<br />
     片中 Paragon 价格于 2026-10-25 在其官网核验（家庭用途单席、一次性付款）；地区、税费及后续变化以官网结算为准，两者功能与服务范围不同。
   </div>
   <p class="en">配乐为原创，采样署名：Salamander Grand Piano V3 by Alexander Holm（CC BY 3.0）、Versilian Studios VSCO 2 CE、FreePats、Karoryfer Samples（CC0）。字体：Noto Sans SC、Inter、JetBrains Mono（SIL OFL 1.1）。</p>
