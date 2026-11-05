@@ -349,15 +349,41 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
             }
         }
         NSLog("[blntfs] 引擎准备：激活选项数=\(activationOptions.count) 挂载选项数=\(taskOptions.count) 默认只读=\(ntfs3gFileSystem.defaultsToReadOnly(combinedOptions)) 有介质标记=\((try? ntfs3gFileSystem.expectedMediaID(combinedOptions)) != nil)")
+        let usesLegacyPreparation = legacyActivationPolicy != nil
+        var preparedBackend: NTFSBackend?
+        if usesLegacyPreparation {
+            do {
+                guard let previous = backend else { throw posixError(ENXIO) }
+                // 工厂只创建后端包装器，不开启RW引擎。先完成只读预检和身份复核，拒绝时原RO仍存活。
+                preparedBackend = try mountBackend?(combinedOptions, readOnly, previous.backend)
+            } catch {
+                writeCapabilityFailure = error
+                onContainerStatusChange(.notReady(status: error))
+                throw error
+            }
+        }
+        defer {
+            // 原RO关闭失败时，新包装器还未转移，必须精确释放一次。
+            if let preparedBackend {
+                nfsk_backend_free(preparedBackend.backend)
+                preparedBackend.cleanup()
+            }
+        }
         do {
-            // 先关闭只读引擎；预检与重开在同一资源上串行，不保留并行引擎。
+            // 新RW引擎只在原RO关闭后开启；现代系统仍按原顺序预检与准备。
             guard let previous = backend else { throw posixError(ENXIO) }
             if let h = handle {
                 let rc = nfsk_umount(h)
                 handle = nil
                 if rc != 0 { throw posixError(-rc) }
             }
-            let replacement = try mountBackend?(combinedOptions, readOnly, previous.backend)
+            let replacement: NTFSBackend?
+            if usesLegacyPreparation {
+                replacement = preparedBackend
+                preparedBackend = nil
+            } else {
+                replacement = try mountBackend?(combinedOptions, readOnly, previous.backend)
+            }
             let engineReadOnly = replacement.map { !$0.writable } ?? readOnly
             if let replacement {
                 nfsk_backend_free(previous.backend); previous.cleanup()

@@ -9,6 +9,7 @@ struct WriteReadyChecks {
         var checks = 0
         var failure: Int32 = 0
         var stale = false
+        var staleAfterCapability = false
         var status: FSContainerStatus?
     }
     static let token = "11111111-2222-4333-8444-555555555555"
@@ -47,6 +48,7 @@ struct WriteReadyChecks {
                 try identity()
                 trace.checks += 1
                 if trace.failure != 0 { throw posixError(trace.failure) }
+                if trace.staleAfterCapability { trace.stale = true }
             } : nil)
     }
     static func denied(_ code: Int32? = nil, _ body: () async throws -> Void) async {
@@ -66,6 +68,38 @@ struct WriteReadyChecks {
     }
     static func main() async throws {
         let image = CommandLine.arguments[1]
+        // 真实helper先fsync再正常unmount；不能跳过sync声称失败卷可清理。
+        for reason in [NFSK_CHECK_DIRTY, NFSK_CHECK_HIBERNATED, NFSK_CHECK_JOURNAL, NFSK_CHECK_METADATA] {
+            let trace = Trace(); let candidate = try volume(image, trace)
+            let root = try candidate.activate(taskOptions: rw)
+            let before = try Data(contentsOf: URL(fileURLWithPath: image)); koio_trace_reset()
+            nfsk_test_fail_preflight(Int32(reason))
+            await denied(EIO) { _ = try await candidate.xattr(named: FSFileName(string: prepare + token), of: root) }
+            nfsk_test_fail_preflight(0)
+            try await candidate.synchronize(flags: .wait)
+            _ = try await candidate.attributes(FSItem.GetAttributesRequest(), of: root)
+            await denied(EIO) { _ = try await candidate.xattr(named: FSFileName(string: ready + token), of: root) }
+            await denied(EIO) { _ = try await create(candidate, root, "预检失败不得写") }
+            precondition(trace.factory == 0 && trace.cleanups == 0 && koio_trace_writable_mounts() == 0 && koio_trace_pwrites() == 0)
+            await candidate.unmount(); try await candidate.deactivate(); candidate.teardown()
+            precondition(trace.status?.state == .notReady && trace.cleanups == 1 && koio_trace_pwrites() == 0)
+            precondition((try? Data(contentsOf: URL(fileURLWithPath: image))) == before)
+        }
+        print("四类预检拒绝：原RO可读，真实helper顺序sync→unmount→deactivate成功，原错不被RO成功清理覆盖，零RW工厂/零pwrite/raw不变")
+        let identityTrace = Trace(); identityTrace.staleAfterCapability = true
+        let identityVolume = try volume(image, identityTrace)
+        let identityRoot = try identityVolume.activate(taskOptions: rw)
+        let identityBefore = try Data(contentsOf: URL(fileURLWithPath: image)); koio_trace_reset()
+        await denied(ESTALE) { _ = try await identityVolume.xattr(named: FSFileName(string: prepare + token), of: identityRoot) }
+        identityTrace.stale = false
+        try await identityVolume.synchronize(flags: .wait)
+        _ = try await identityVolume.attributes(FSItem.GetAttributesRequest(), of: identityRoot)
+        await denied(ESTALE) { _ = try await identityVolume.xattr(named: FSFileName(string: ready + token), of: identityRoot) }
+        precondition(identityTrace.factory == 0 && identityTrace.cleanups == 0 && identityTrace.checks == 1)
+        await identityVolume.unmount(); try await identityVolume.deactivate(); identityVolume.teardown()
+        precondition(identityTrace.cleanups == 1 && koio_trace_pwrites() == 0 && koio_trace_writable_mounts() == 0)
+        precondition((try? Data(contentsOf: URL(fileURLWithPath: image))) == identityBefore)
+        print("同步能力后身份变化：完整准备仍在原RO存活时拒绝，helper顺序正常卸载、原ESTALE锁存、零写")
         for options in [["writeflow-ready-token=" + token], ["-o", "rw,writeflow-ready-token=" + token],
                         ["-owriteflow-ready-token=" + token, "writeflow-ready-token=" + token]] {
             let parsed = try ntfs3gFileSystem.writeReadyToken(options)

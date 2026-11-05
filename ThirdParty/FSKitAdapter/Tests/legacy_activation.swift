@@ -164,11 +164,18 @@ struct LegacyActivation {
             let expected = failure == "身份变化" ? ESTALE : failure == "不可写后端" ? EROFS : EIO
             await rejects(expected) { try await mkdir(candidate, root, "门禁不得写入") }
             nfsk_test_fail_preflight(0); nfsk_test_fail_close(0)
-            await rejects(ENXIO) { try await mkdir(candidate, root, "失败不得重试") }
+            await rejects(failure == "关闭失败" ? ENXIO : expected) { try await mkdir(candidate, root, "失败不得重试") }
+            if failure == "关闭失败" {
+                await rejects(ENXIO) { try await candidate.synchronize(flags: .wait) }
+            } else {
+                _ = try await candidate.attributes(FSItem.GetAttributesRequest(), of: root)
+                try await candidate.synchronize(flags: .wait)
+            }
             await candidate.unmount(); try await candidate.deactivate(); candidate.teardown()
             precondition(count.status?.state == .notReady)
-            precondition(count.factory == (failure == "不可写后端" ? 1 : 0))
-            precondition(count.cleanups == (failure == "不可写后端" ? 2 : 1), "失败应只清理一次：\(failure)")
+            let allocated = failure == "不可写后端" || failure == "关闭失败"
+            precondition(count.factory == (allocated ? 1 : 0))
+            precondition(count.cleanups == (allocated ? 2 : 1), "各后端必须只清理一次：\(failure)")
             precondition((try? Data(contentsOf: URL(fileURLWithPath: image))) == before)
         }
         for closeFailure in [false, true] {
