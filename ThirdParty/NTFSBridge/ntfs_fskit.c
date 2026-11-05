@@ -684,6 +684,14 @@ int nfsk_sync(ntfs_fskit_volume *v) {
     return -(current ? current : saved);
 }
 
+int nfsk_write_status(ntfs_fskit_volume *v) {
+    if (!v || !v->vol || !v->devctx) return -EINVAL;
+    if (v->read_only) return -EROFS;
+    int error = v->devctx->fatal_writeback_error;
+    if (!error) error = v->devctx->writeback_error;
+    return -error;
+}
+
 int nfsk_statfs(ntfs_fskit_volume *v, nfsk_statfs_t *out) {
     if (!v || !v->vol || !out) return -EINVAL;
     ntfs_volume *vol = v->vol;

@@ -77,6 +77,8 @@ int  nfsk_probe(void *resource, char *name_out, size_t name_cap, uint64_t *seria
 /* Always consumes v, including on error. Returns zero or negative errno. */
 int nfsk_umount(ntfs_fskit_volume *v);
 int  nfsk_sync(ntfs_fskit_volume *v);
+/* 只查询写权限与已锁存的写回错误；不执行I/O、同步或清除错误。 */
+int  nfsk_write_status(ntfs_fskit_volume *v);
 int  nfsk_statfs(ntfs_fskit_volume *v, nfsk_statfs_t *out);
 
 /* Read-only mount preflight, not a full consistency scan or repair. The resource

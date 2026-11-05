@@ -39,6 +39,17 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
     private var pendingActivationWrite = false
     private var activationOpenItems: Set<UInt64> = []
     private var legacyActivationPolicy: (([String]) throws -> Bool)?
+    private let legacyActivationOptions: [String]
+    private var validateWriteCapability: (([String]) throws -> Void)?
+    private var writeCapabilityFailure: Error?
+    private struct WritePreparation {
+        let token: String
+        let mediaID: UInt64
+        var prepared = false
+    }
+    private var writePreparation: WritePreparation?
+    private static let preparePrefix = "com.blteam.ntfsworkbench.write-prepare."
+    private static let readyPrefix = "com.blteam.ntfsworkbench.write-ready."
     private let lock = NSLock()
     private var items: [UInt64: ntfs3gItem] = [:]
     private let rootItem: ntfs3gItem
@@ -55,7 +66,9 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
          mountBackend: @escaping ([String], Bool, UnsafeMutableRawPointer) throws -> NTFSBackend?,
          onContainerStatusChange: @escaping (FSContainerStatus) -> Void,
          legacyOpenUnlink: Bool = ntfs3gVolume.needsLegacyOpenUnlink,
-         legacyActivationPolicy: (([String]) throws -> Bool)? = nil) throws {
+         legacyActivationPolicy: (([String]) throws -> Bool)? = nil,
+         legacyActivationOptions: [String] = [],
+         validateWriteCapability: (([String]) throws -> Void)? = nil) throws {
         var err: Int32 = 0
         guard let h = nfsk_mount(backend.backend, true, &err) else {
             backend.cleanup()
@@ -87,6 +100,8 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
         self.rootItem = root
         self.legacyOpenUnlink = legacyOpenUnlink
         self.legacyActivationPolicy = legacyActivationPolicy
+        self.legacyActivationOptions = legacyActivationPolicy == nil ? [] : legacyActivationOptions
+        self.validateWriteCapability = validateWriteCapability
 
         let vid = FSVolume.Identifier(uuid: NTFSVolumeSupport.volumeUUID(serial: st.volume_serial, label: volName, sizeBytes: totalBytes))
         super.init(volumeID: vid, volumeName: FSFileName(string: volName))
@@ -107,6 +122,8 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
         pendingActivationWrite = false
         activationOpenItems.removeAll()
         legacyActivationPolicy = nil
+        validateWriteCapability = nil
+        writePreparation = nil
         if let h = handle { _ = nfsk_umount(h); handle = nil }
         if let b = backend { nfsk_backend_free(b.backend); b.cleanup(); backend = nil }
         mountBackend = nil
@@ -250,10 +267,20 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
         NSLog("[blntfs] 激活输入：选项数=\(taskOptions.count) 默认只读=\(ntfs3gFileSystem.defaultsToReadOnly(taskOptions)) 有介质标记=\((try? ntfs3gFileSystem.expectedMediaID(taskOptions)) != nil)")
         try withLock {
             guard !tornDown, handle != nil else { throw posixError(ENXIO) }
+            if let failure = writeCapabilityFailure { throw failure }
             guard !activated, !mounted, readOnly else { throw posixError(EBUSY) }
             do {
-                pendingActivationWrite = try legacyActivationPolicy?(taskOptions) ?? false
-                activationOptions = taskOptions
+                // 旧系统可能只在load传选项；许可、nonce、介质绑定与后续准备必须用同一完整上下文。
+                let selectedOptions = legacyActivationOptions + taskOptions
+                pendingActivationWrite = try legacyActivationPolicy?(selectedOptions) ?? false
+                if legacyActivationPolicy != nil {
+                    let token = try ntfs3gFileSystem.writeReadyToken(selectedOptions)
+                    if pendingActivationWrite, let token {
+                        guard let mediaID = try ntfs3gFileSystem.expectedMediaID(selectedOptions) else { throw posixError(ESTALE) }
+                        writePreparation = WritePreparation(token: token, mediaID: mediaID)
+                    }
+                }
+                activationOptions = selectedOptions
                 activated = true
                 NSLog("[blntfs] 激活许可：待写=\(pendingActivationWrite)")
             } catch {
@@ -272,8 +299,9 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
             activated = false
             activationOptions = []
             pendingActivationWrite = false
+            writePreparation = nil
             activationOpenItems.removeAll()
-            return tornDown
+            return tornDown || writeCapabilityFailure != nil
         }
         // 已清理的失败卷保留原 notReady 错误，不改写为通用错误或 ready。
         if !closed { onContainerStatusChange(.ready) }
@@ -288,6 +316,19 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
         try withLock {
             guard !tornDown, handle != nil, activated else { throw posixError(ENXIO) }
             guard !mounted else { throw posixError(EBUSY) }
+            if let failure = writeCapabilityFailure { throw failure }
+            if let preparation = writePreparation {
+                // 握手前mount只记录选项，不允许系统后台回调抢先开启写入。
+                let combined = activationOptions + taskOptions
+                guard try ntfs3gFileSystem.writeReadyToken(combined) == preparation.token,
+                      try ntfs3gFileSystem.expectedMediaID(combined) == preparation.mediaID else { throw posixError(EINVAL) }
+                activationOptions = combined
+                if ntfs3gFileSystem.defaultsToReadOnly(combined) {
+                    pendingActivationWrite = false
+                    writePreparation = nil
+                }
+                return
+            }
             NSLog("[blntfs] 挂载输入：挂载选项数=\(taskOptions.count)")
             try prepareMountLocked(taskOptions: taskOptions)
         }
@@ -297,6 +338,16 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
     private func prepareMountLocked(taskOptions: [String]) throws {
         pendingActivationWrite = false
         let combinedOptions = activationOptions + taskOptions
+        if let failure = writeCapabilityFailure { throw failure }
+        if readOnly {
+            do { try validateWriteCapability?(combinedOptions) }
+            catch {
+                // 原引擎尚未关闭且未开启写入；保留RO供读取及正常卸载，不把能力失败变成ENXIO。
+                writeCapabilityFailure = error
+                onContainerStatusChange(.notReady(status: error))
+                throw error
+            }
+        }
         NSLog("[blntfs] 引擎准备：激活选项数=\(activationOptions.count) 挂载选项数=\(taskOptions.count) 默认只读=\(ntfs3gFileSystem.defaultsToReadOnly(combinedOptions)) 有介质标记=\((try? ntfs3gFileSystem.expectedMediaID(combinedOptions)) != nil)")
         do {
             // 先关闭只读引擎；预检与重开在同一资源上串行，不保留并行引擎。
@@ -344,6 +395,8 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
     // 必须在读取handle前调用，升级会消费原只读句柄，不能继续使用旧指针。
     private func writableHandleLocked() throws -> OpaquePointer {
         guard !tornDown, activated, handle != nil else { throw posixError(ENXIO) }
+        if let failure = writeCapabilityFailure { throw failure }
+        if let preparation = writePreparation, !preparation.prepared { throw posixError(EROFS) }
         if pendingActivationWrite {
             NSLog("[blntfs] 首次修改：执行旧系统写前门禁")
             try prepareMountLocked(taskOptions: [])
@@ -666,10 +719,41 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
     var maximumXattrSize: Int { Int(NFSK_MAX_XATTR_SIZE) }
 
     // MARK: Extended attributes
+    private static func isPreparationAttribute(_ key: String) -> Bool {
+        key.hasPrefix(preparePrefix) || key.hasPrefix(readyPrefix)
+    }
+
+    // 调用方持原锁；只认本次根对象和激活nonce，不读取磁盘同名属性。
+    private func preparationReceiptLocked(key: String, item: FSItem) throws -> Data {
+        guard item === rootItem else { throw posixError(EPERM) }
+        guard let preparation = writePreparation else { throw posixError(ENOTSUP) }
+        let isPrepare = key == Self.preparePrefix + preparation.token
+        guard isPrepare || key == Self.readyPrefix + preparation.token else { throw posixError(EPERM) }
+        guard !tornDown, activated else { throw posixError(ENXIO) }
+        if let failure = writeCapabilityFailure { throw failure }
+        if isPrepare, !preparation.prepared {
+            guard pendingActivationWrite, readOnly, !mounted else { throw posixError(EROFS) }
+            guard validateWriteCapability != nil else { throw posixError(ENOTSUP) }
+            try prepareMountLocked(taskOptions: [])
+            writePreparation?.prepared = true
+        }
+        guard writePreparation?.prepared == true else { throw posixError(EAGAIN) }
+        // 准备会消费旧句柄，必须重取；查询只读C状态，绝不借sync写盘或清错。
+        guard mounted, !readOnly, backend?.writable == true, let h = handle else { throw posixError(EROFS) }
+        let status = nfsk_write_status(h)
+        guard status == 0 else { throw posixError(-status) }
+        let receipt: [String: Any] = ["schema": 1, "token": preparation.token,
+            "mediaID": preparation.mediaID, "writable": true]
+        let data = try JSONSerialization.data(withJSONObject: receipt, options: [.sortedKeys])
+        guard data.count <= 1024 else { throw posixError(EOVERFLOW) }
+        return data
+    }
+
     func xattr(named name: FSFileName, of item: FSItem) async throws -> Data {
         try withLock {
-            guard let it = item as? ntfs3gItem, let h = handle,
-                  let key = name.string, !key.utf8.contains(0) else { throw posixError(EINVAL) }
+            guard let key = name.string, !key.utf8.contains(0) else { throw posixError(EINVAL) }
+            if Self.isPreparationAttribute(key) { return try preparationReceiptLocked(key: key, item: item) }
+            guard let it = item as? ntfs3gItem, let h = handle else { throw posixError(EINVAL) }
             return try key.withCString { key in
                 let size = nfsk_getxattr(h, it.ino, key, nil, 0)
                 if size < 0 { throw posixError(Int32(-size)) }
@@ -685,8 +769,9 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
     func setXattr(named name: FSFileName, to value: Data?, on item: FSItem,
                   policy: FSVolume.SetXattrPolicy) async throws {
         try withLock {
-            guard let it = item as? ntfs3gItem,
-                  let key = name.string, !key.utf8.contains(0) else { throw posixError(EINVAL) }
+            guard let key = name.string, !key.utf8.contains(0) else { throw posixError(EINVAL) }
+            guard !Self.isPreparationAttribute(key) else { throw posixError(EPERM) }
+            guard let it = item as? ntfs3gItem else { throw posixError(EINVAL) }
             let bridgePolicy: Int32
             switch policy {
             case .alwaysSet: bridgePolicy = Int32(NFSK_XATTR_SET)
@@ -715,11 +800,11 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
             let read = bytes.withUnsafeMutableBufferPointer { nfsk_listxattr(h, it.ino, $0.baseAddress, $0.count) }
             if read < 0 { throw posixError(Int32(-read)) }
             guard read == size else { throw posixError(EIO) }
-            return try bytes.split(separator: 0).map { name in
+            return try bytes.split(separator: 0).compactMap { name in
                 guard let string = String(bytes: name.map { UInt8(bitPattern: $0) }, encoding: .utf8) else {
                     throw posixError(EIO)
                 }
-                return FSFileName(string: string)
+                return Self.isPreparationAttribute(string) ? nil : FSFileName(string: string)
             }
         }
     }

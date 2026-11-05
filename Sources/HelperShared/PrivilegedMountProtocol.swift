@@ -51,6 +51,7 @@ struct PrivilegedMountResult: Codable, Sendable {
     let fileSystemIdentity: String
     let readOnly: Bool
     var backend: PrivilegedMountBackend?
+    var writeReady: Bool? = nil
 }
 
 struct PrivilegedEjectRequest: Codable, Sendable {

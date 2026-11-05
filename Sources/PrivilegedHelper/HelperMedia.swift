@@ -60,7 +60,7 @@ enum HelperCommand {
     }
 
     // 旧系统身份桥和原生只读命令使用。普通文件避免后代持有Pipe使EOF等待无界；超时不等于已取消。
-    static func runBridge(_ executable: String, _ arguments: [String], timeout: TimeInterval = 30) throws -> Data {
+    static func runBridge(_ executable: String, _ arguments: [String], timeout: TimeInterval = 30, input: FileHandle? = nil) throws -> Data {
         var template = Array("/private/tmp/NTFSWriteFlow-mount-output.XXXXXX".utf8CString)
         let descriptor = mkstemp(&template)
         guard descriptor >= 0 else { throw HelperFailure(message: "无法准备挂载输出文件。") }
@@ -75,7 +75,7 @@ enum HelperCommand {
         process.arguments = arguments
         process.environment = try environment(for: executable)
         process.currentDirectoryURL = URL(fileURLWithPath: "/")
-        process.standardInput = FileHandle.nullDevice
+        process.standardInput = input ?? FileHandle.nullDevice
         let output = FileHandle(fileDescriptor: descriptor, closeOnDealloc: false)
         process.standardOutput = output; process.standardError = output
         do { try process.run() }
@@ -138,6 +138,13 @@ enum FSKitMountBridge {
         return ticket
     }
 
+    static func systemArguments(for ticket: HelperTicket) throws -> [String] {
+        _ = try arguments(for: ticket)
+        var values = try HelperCommand.systemMountArguments(ticket.request, userID: ticket.userID, token: ticket.token)
+        if !ticket.request.readOnly { values[4] += "," + (try FSKitWriteReadiness.option(token: ticket.token)) }
+        return values
+    }
+
     static func invocation(for ticket: HelperTicket) throws -> (String, [String]) {
         let path = try LegacyRuntime.mountHelperCachePath(userID: ticket.userID, token: ticket.token)
         return ("/bin/launchctl", ["asuser", String(ticket.userID), path] + (try arguments(for: ticket)))
@@ -154,7 +161,7 @@ enum FSKitMountBridge {
               ticket.request.readOnly || media.volume.writableMedia == true else {
             throw HelperFailure(message: "介质已有挂载或未确认可写，内部模式已停止。")
         }
-        let mount = try HelperCommand.systemMountArguments(ticket.request, userID: ticket.userID, token: ticket.token)
+        let mount = try systemArguments(for: ticket)
         try media.validate(ticket.request)
         // 这里是重新exec后的独立进程；父daemon的线程、凭据和XPC监听均不改变。
         let result = mount[4].withCString { options in

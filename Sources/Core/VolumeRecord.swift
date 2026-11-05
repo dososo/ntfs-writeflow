@@ -24,6 +24,10 @@ enum StorageBackend: String, Sendable {
     static func requiresManagedMount(on version: OperatingSystemVersion) -> Bool {
         version.majorVersion < 26 || (version.majorVersion == 26 && version.minorVersion < 4)
     }
+    static func requiresWriteReadiness(on version: OperatingSystemVersion = ProcessInfo.processInfo.operatingSystemVersion) -> Bool {
+        version.majorVersion < 26 && (version.majorVersion > 15 ||
+            (version.majorVersion == 15 && version.minorVersion >= 4))
+    }
     var title: String { self == .fsKit ? "FSKit" : "macFUSE 兼容后端" }
 }
 
@@ -38,13 +42,16 @@ struct MountedFileSystem: Equatable, Sendable {
         if type == "blntfs" { return true }
         guard ["macfuse", "ntfs"].contains(type), ownerID == 0,
               type != "ntfs" || isReadOnly else { return false }
+        return managedToken != nil
+    }
+    var managedToken: String? {
         let prefix = "/private/var/db/com.blteam.ntfsworkbench.mounts/"
-        guard mountPoint.hasPrefix(prefix) else { return false }
+        guard mountPoint.hasPrefix(prefix) else { return nil }
         let parts = mountPoint.dropFirst(prefix.count).split(separator: "/", omittingEmptySubsequences: false)
         guard parts.count == 3, let user = UInt32(parts[0]), user >= 501, user != UInt32.max,
               String(user) == parts[0], parts[2] == "volume",
-              UUID(uuidString: String(parts[1]))?.uuidString == String(parts[1]) else { return false }
-        return true
+              UUID(uuidString: String(parts[1]))?.uuidString == String(parts[1]) else { return nil }
+        return String(parts[1])
     }
 }
 
@@ -53,6 +60,7 @@ enum VolumeAccess: String, Sendable {
     case readOnly = "只读"
     case readWrite = "可读写"
     case unknown = "访问状态未知"
+    case writeNotReady = "写入未就绪"
 }
 
 struct VolumeRecord: Identifiable, Equatable, Sendable {
@@ -76,9 +84,12 @@ struct VolumeRecord: Identifiable, Equatable, Sendable {
     let mediaRegistryID: UInt64?
     let wholeMediaRegistryID: UInt64?
     let mountedFileSystem: MountedFileSystem?
+    let writeReadinessRequired: Bool
+    var writeReady: Bool?
 
     init?(info: [String: Any], mediaRegistryID: UInt64? = nil, wholeMediaRegistryID: UInt64? = nil,
-          mountedFileSystem: MountedFileSystem? = nil) {
+          mountedFileSystem: MountedFileSystem? = nil, writeReady: Bool? = nil,
+          writeReadinessRequired: Bool = StorageBackend.requiresWriteReadiness()) {
         guard let identifier = info["DeviceIdentifier"] as? String,
               Self.validDeviceID(identifier) else { return nil }
         id = identifier
@@ -108,16 +119,27 @@ struct VolumeRecord: Identifiable, Equatable, Sendable {
         self.mediaRegistryID = mediaRegistryID
         self.wholeMediaRegistryID = wholeMediaRegistryID
         self.mountedFileSystem = mountedFileSystem
+        self.writeReady = writeReady
+        self.writeReadinessRequired = writeReadinessRequired
     }
 
     var isVolume: Bool { !fileSystem.isEmpty || isNTFS || mountPoint != nil }
 
     var access: VolumeAccess {
         guard mountPoint != nil else { return .unmounted }
-        if let mountedFileSystem { return mountedFileSystem.isReadOnly ? .readOnly : .readWrite }
+        if let mountedFileSystem {
+            if needsWriteReadiness && writeReady != true { return .writeNotReady }
+            return mountedFileSystem.isReadOnly ? .readOnly : .readWrite
+        }
         if writableVolume == false || writableMedia == false { return .readOnly }
         if writableVolume == true { return .readWrite }
         return .unknown
+    }
+
+    var needsWriteReadiness: Bool {
+        writeReadinessRequired && mountedFileSystem?.type == "blntfs"
+            && mountedFileSystem?.ownerID == 0 && mountedFileSystem?.managedToken != nil
+            && mountedFileSystem?.isReadOnly == false
     }
 
     var isProtected: Bool {

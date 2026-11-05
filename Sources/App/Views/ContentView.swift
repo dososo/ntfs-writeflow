@@ -37,7 +37,11 @@ struct ContentView: View {
                 if let error = model.errorMessage {
                     message(error, symbol: "exclamationmark.triangle", color: .orange)
                 } else if let text = model.operationMessage {
-                    message(text, symbol: "checkmark.circle", color: .green)
+                    if model.selectedVolume?.access == .writeNotReady {
+                        message("上次操作：\(text) 当前选中卷的写入尚未就绪。", symbol: "exclamationmark.circle", color: .orange)
+                    } else {
+                        message(text, symbol: "checkmark.circle", color: .green)
+                    }
                 }
                 if model.unreadableCount > 0 {
                     message("\(model.unreadableCount) 个设备状态暂时无法读取。", symbol: "info.circle", color: .secondary)

@@ -17,6 +17,7 @@ struct VolumeDetailView: View {
         switch volume.access {
         case .readWrite: .green
         case .readOnly: .orange
+        case .writeNotReady: .orange
         case .unmounted, .unknown: .secondary
         }
     }
@@ -35,6 +36,10 @@ struct VolumeDetailView: View {
                             .font(.callout.weight(.medium)).foregroundStyle(stateColor)
                     }
                     Spacer()
+                }
+                if volume.access == .writeNotReady {
+                    Label("系统已挂载，但尚未确认扩展内部写入已就绪。可刷新核验或正常卸载；不要按可写卷使用。", systemImage: "exclamationmark.circle")
+                        .font(.callout).foregroundStyle(.orange)
                 }
                 if volume.isNTFS {
                     Label("预览版：重要数据请先备份。Windows 休眠、快速启动或磁盘异常可能影响安全读写；请先在 Windows 中正常关闭并检查磁盘。", systemImage: "exclamationmark.shield")

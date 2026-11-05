@@ -33,6 +33,23 @@ final class ntfs3gFileSystem: FSUnaryFileSystem, FSUnaryFileSystemOperations,
         return expected
     }
 
+    // 只接受规范大写UUID；相同重复值允许，不同值或格式错误一律拒绝。
+    static func writeReadyToken(_ options: [String]) throws -> String? {
+        var selected: String?
+        for option in options {
+            let value = option.hasPrefix("-o") ? String(option.dropFirst(2)) : option
+            for token in value.split(separator: ",", omittingEmptySubsequences: false) {
+                let prefix = "writeflow-ready-token="
+                guard token.hasPrefix(prefix) else { continue }
+                let value = String(token.dropFirst(prefix.count))
+                guard UUID(uuidString: value)?.uuidString == value,
+                      selected == nil || selected == value else { throw posixError(EINVAL) }
+                selected = value
+            }
+        }
+        return selected
+    }
+
     private static func validateIdentity(_ resource: FSResource, options: [String]) throws {
         guard let expected = try expectedMediaID(options) else { return }
         guard let block = resource as? FSBlockDeviceResource,
@@ -183,16 +200,27 @@ final class ntfs3gFileSystem: FSUnaryFileSystem, FSUnaryFileSystemOperations,
             // the backend and runs cleanup itself.
             let legacyActivationPolicy: (([String]) throws -> Bool)?
             if #unavailable(macOS 26.0) {
-                legacyActivationPolicy = { activationOptions in
-                    let explicitOptions = options.taskOptions + activationOptions
-                    try Self.validateIdentity(resource, options: explicitOptions)
-                    return try !Self.resolvedMountReadOnly(explicitOptions, resourceWritable: resourceWritable,
+                legacyActivationPolicy = { selectedOptions in
+                    try Self.validateIdentity(resource, options: selectedOptions)
+                    return try !Self.resolvedMountReadOnly(selectedOptions, resourceWritable: resourceWritable,
                         blockResource: resource is FSBlockDeviceResource)
                 }
             } else { legacyActivationPolicy = nil }
+            let validateWriteCapability: (([String]) throws -> Void)?
+            if #unavailable(macOS 26.0), let block = resource as? FSBlockDeviceResource {
+                validateWriteCapability = { selectedOptions in
+                    // 仅探测原资源同步能力；完整预检与身份复核仍由原写入转换执行。
+                    guard !Self.defaultsToReadOnly(selectedOptions) else { return }
+                    try Self.validateIdentity(resource, options: selectedOptions)
+                    NSLog("[blntfs] 旧系统写前同步能力检查")
+                    try block.metadataFlush()
+                    NSLog("[blntfs] 旧系统写前同步能力检查通过")
+                }
+            } else { validateWriteCapability = nil }
+            let mountLoadOptions = legacyActivationPolicy == nil ? options.taskOptions : []
             let vol = try ntfs3gVolume(backend: made,
                                        mountBackend: { mountOptions, currentReadOnly, readOnlyBackend in
-                                           let explicitOptions = options.taskOptions + mountOptions
+                                           let explicitOptions = mountLoadOptions + mountOptions
                                            try Self.validateIdentity(resource, options: explicitOptions)
                                            let readOnly = try Self.resolvedMountReadOnly(explicitOptions, resourceWritable: resourceWritable,
                                                blockResource: resource is FSBlockDeviceResource)
@@ -210,7 +238,9 @@ final class ntfs3gFileSystem: FSUnaryFileSystem, FSUnaryFileSystemOperations,
                                        },
                                        onContainerStatusChange: { [weak self] status in
                                            self?.containerStatus = status
-                                       }, legacyActivationPolicy: legacyActivationPolicy)
+                                       }, legacyActivationPolicy: legacyActivationPolicy,
+                                       legacyActivationOptions: options.taskOptions,
+                                       validateWriteCapability: validateWriteCapability)
             self.volume = vol
             containerStatus = .ready
             debugLog("loadResource success name=\(vol.name.string ?? "") uuid=\(vol.volumeID.uuid.uuidString) initialReadOnly=true defaultReadOnly=\(defaultReadOnly)")

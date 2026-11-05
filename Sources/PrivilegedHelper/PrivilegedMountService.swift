@@ -53,7 +53,12 @@ final class PrivilegedMountEngine: @unchecked Sendable {
             guard mounted.isReadOnly == request.readOnly else {
                 throw HelperFailure(message: "实际访问模式与请求不符，未报告挂载成功；可刷新后正常卸载此卷。")
             }
-            return try JSONEncoder().encode(result(ticket, path: path, mounted: mounted))
+            var writeReady: Bool?
+            if mounted.type == "blntfs", FSKitWriteReadiness.requires(backend: ticket.backend ?? .fsKit, readOnly: request.readOnly) {
+                try verifyWriteReadiness(ticket, namespace: namespace, mounted: mounted, preparing: true)
+                writeReady = true
+            }
+            return try JSONEncoder().encode(result(ticket, path: path, mounted: mounted, writeReady: writeReady))
         } catch {
             // 系统命令失败也可能已产生挂载；此时保留凭据供同一用户查询和正常卸载。
             let preserve = usesBoundedCommand && FSKitMountBridge.mustPreserveTicket(commandSucceeded: bridgeCommandSucceeded, error: error)
@@ -163,7 +168,15 @@ final class PrivilegedMountEngine: @unchecked Sendable {
                 ticket.fileSystemIdentity = mounted.identity
                 try namespace.save(ticket)
             }
-            values.append(result(ticket, path: path, mounted: mounted))
+            var writeReady: Bool?
+            if mounted.type == "blntfs", FSKitWriteReadiness.requires(backend: ticket.backend ?? .fsKit, readOnly: ticket.request.readOnly) {
+                // 恢复查询只读状态，不触发RO→RW；未知/失败不能被内核RW覆盖。
+                do {
+                    try verifyWriteReadiness(ticket, namespace: namespace, mounted: mounted, preparing: false)
+                    writeReady = true
+                } catch { writeReady = false }
+            }
+            values.append(result(ticket, path: path, mounted: mounted, writeReady: writeReady))
         }
         return try JSONEncoder().encode(values)
     }
@@ -223,10 +236,29 @@ final class PrivilegedMountEngine: @unchecked Sendable {
         }
     }
 
-    private func result(_ ticket: HelperTicket, path: String, mounted: MountedFileSystem) -> PrivilegedMountResult {
+    private func verifyWriteReadiness(_ ticket: HelperTicket, namespace: HelperNamespace,
+                                      mounted: MountedFileSystem, preparing: Bool) throws {
+        let descriptor = open(mounted.mountPoint, O_EVTONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard descriptor >= 0 else { throw HelperFailure(message: "无法持有内部写入检查的原挂载根句柄。") }
+        defer { close(descriptor) }
+        try Self.validateUnmountDescriptor(descriptor, expected: mounted)
+        let executable = try LegacyRuntime.mountHelperCachePath(userID: ticket.userID, token: ticket.token)
+        let arguments = try FSKitWriteProbe.arguments(userID: ticket.userID, token: ticket.token, preparing: preparing)
+        let input = FileHandle(fileDescriptor: descriptor, closeOnDealloc: false)
+        let data = try HelperCommand.runBridge(executable, arguments, timeout: preparing ? 15 : 1, input: input)
+        try FSKitWriteReadiness.validate(data, token: ticket.token, mediaID: ticket.request.mediaRegistryID)
+        try Self.validateUnmountDescriptor(descriptor, expected: mounted)
+        try HelperMedia(ticket.request).validate(ticket.request)
+        guard MountedFileSystemReader.read(path: mounted.mountPoint) == mounted else {
+            throw HelperFailure(message: "内部写入检查后挂载实例已变化。")
+        }
+    }
+
+    private func result(_ ticket: HelperTicket, path: String, mounted: MountedFileSystem,
+                        writeReady: Bool? = nil) -> PrivilegedMountResult {
         PrivilegedMountResult(token: ticket.token, mountPoint: path, deviceID: ticket.request.deviceID,
             mediaRegistryID: ticket.request.mediaRegistryID, wholeMediaRegistryID: ticket.request.wholeMediaRegistryID,
-            fileSystemIdentity: mounted.identity, readOnly: mounted.isReadOnly, backend: ticket.backend)
+            fileSystemIdentity: mounted.identity, readOnly: mounted.isReadOnly, backend: ticket.backend, writeReady: writeReady)
     }
 }
 
