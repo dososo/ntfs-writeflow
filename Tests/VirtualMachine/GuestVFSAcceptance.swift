@@ -229,6 +229,50 @@ private struct Mount: Equatable, Codable {
     }
     #if COMMAND_REGRESSION
     private static func commandRegression() throws {
+        let token = "A1111111-B222-4333-8444-555555555555"
+        let rootPath = "/private/var/db/com.blteam.ntfsworkbench.mounts/501/" + token + "/volume"
+        let directPath = "/private/tmp/ntfs-writeflow-501/" + token
+        let modern = OperatingSystemVersion(majorVersion: 26, minorVersion: 4, patchVersion: 0)
+        let previous = OperatingSystemVersion(majorVersion: 26, minorVersion: 3, patchVersion: 0)
+        let legacy = OperatingSystemVersion(majorVersion: 15, minorVersion: 4, patchVersion: 0)
+        func sample(owner: UInt32 = 0, path: String? = nil, type: String = "blntfs", ro: Bool = false,
+                    source: String = "/dev/disk999") -> Mount {
+            Mount(type: type, source: source, path: path ?? rootPath, identity: "123:24", owner: owner, readOnly: ro)
+        }
+        let origins: [(String, Mount, Bool, OperatingSystemVersion, Bool, Bool)] = [
+            ("现代root票据", sample(), false, modern, false, true),
+            ("现代用户直接路径", sample(owner: 501, path: directPath), false, modern, true, true),
+            ("现代用户只读路径", sample(owner: 501, path: directPath, ro: true), true, modern, true, true),
+            ("旧FSKit root读写", sample(), false, legacy, false, true),
+            ("旧原生root只读", sample(type: "ntfs", ro: true), true, legacy, false, true),
+            ("26.3 root原生只读", sample(type: "ntfs", ro: true), true, previous, false, true),
+            ("26.3用户路径拒绝", sample(owner: 501, path: directPath), false, previous, true, false),
+            ("15.4用户路径拒绝", sample(owner: 501, path: directPath), false, legacy, true, false),
+            ("root所有者不得用用户路径", sample(path: directPath), false, modern, true, false),
+            ("用户所有者不得用root路径", sample(owner: 501), false, modern, true, false),
+            ("挂载所有者错误", sample(owner: 502, path: directPath), false, modern, true, false),
+            ("用户路径UID错误", sample(owner: 501, path: directPath.replacingOccurrences(of: "-501/", with: "-502/")), false, modern, true, false),
+            ("用户同名前缀拒绝", sample(owner: 501, path: directPath.replacingOccurrences(of: "-501/", with: "-501-extra/")), false, modern, true, false),
+            ("用户UUID非规范拒绝", sample(owner: 501, path: directPath.replacingOccurrences(of: token, with: "不是UUID")), false, modern, true, false),
+            ("用户小写UUID拒绝", sample(owner: 501, path: directPath.replacingOccurrences(of: token, with: token.lowercased())), false, modern, true, false),
+            ("root小写UUID拒绝", sample(path: rootPath.replacingOccurrences(of: token, with: token.lowercased())), false, modern, true, false),
+            ("用户额外子级拒绝", sample(owner: 501, path: directPath + "/volume"), false, modern, true, false),
+            ("用户尾斜线拒绝", sample(owner: 501, path: directPath + "/"), false, modern, true, false),
+            ("用户父目录不安全拒绝", sample(owner: 501, path: directPath), false, modern, false, false),
+            ("root路径UID错误", sample(path: rootPath.replacingOccurrences(of: "/501/", with: "/502/")), false, modern, true, false),
+            ("root路径UID前导零拒绝", sample(path: rootPath.replacingOccurrences(of: "/501/", with: "/0501/")), false, modern, true, false),
+            ("root叶名错误", sample(path: rootPath + "-extra"), false, modern, true, false),
+            ("root同名前缀拒绝", sample(path: rootPath.replacingOccurrences(of: "mounts/", with: "mounts-extra/")), false, modern, true, false),
+            ("现代错误type拒绝", sample(type: "ntfs", ro: true), true, modern, true, false),
+            ("用户错误type拒绝", sample(owner: 501, path: directPath, type: "apfs"), false, modern, true, false),
+            ("请求RO实际RW拒绝", sample(), true, modern, true, false),
+            ("请求RW实际RO拒绝", sample(ro: true), false, modern, true, false),
+            ("来源不匹配拒绝", sample(source: "/dev/disk998"), false, modern, true, false)
+        ]
+        for (name, value, ro, version, safe, expected) in origins {
+            try require(mountMatches(value, device: "/dev/disk999", readOnly: ro, userID: 501,
+                version: version, directParentIsPrivate: safe) == expected, "挂载来源回归失败：\(name)")
+        }
         for (major, minor, readOnly, expected) in [(13, 0, true, "macfuse"), (15, 3, true, "macfuse"),
             (15, 4, true, "ntfs"), (15, 4, false, "blntfs"), (26, 0, true, "ntfs"), (26, 3, true, "ntfs"),
             (26, 3, false, "blntfs"), (26, 4, true, "blntfs")] {
@@ -238,6 +282,20 @@ private struct Mount: Equatable, Codable {
         }
         let run = FileManager.default.temporaryDirectory.appendingPathComponent("WriteFlow-普通文件命令回归-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: run, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        let parent = run.appendingPathComponent("私有父目录")
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        try require(privateDirectory(at: parent.path, userID: geteuid()), "实际当前用户0700父目录应通过")
+        try require(!privateDirectory(at: parent.path, userID: geteuid() + 1), "实际父目录所有者不符必须拒绝")
+        try require(chmod(parent.path, 0o755) == 0, "普通测试目录权限设置失败")
+        try require(!privateDirectory(at: parent.path, userID: geteuid()), "实际非0700父目录必须拒绝")
+        try require(chmod(parent.path, 0o700) == 0, "普通测试目录权限恢复失败")
+        let link = run.appendingPathComponent("父目录链接")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: parent)
+        try require(!privateDirectory(at: link.path, userID: geteuid()), "lstat不得跟随父目录符号链接")
+        let leaf = run.appendingPathComponent("普通文件")
+        try Data().write(to: leaf, options: .withoutOverwriting)
+        try require(!privateDirectory(at: leaf.path, userID: geteuid()), "普通文件不得当私有父目录")
+        try require(!privateDirectory(at: run.appendingPathComponent("不存在").path, userID: geteuid()), "不存在父目录必须拒绝")
         let normal = try command("/bin/sh", ["-c", "printf '普通成功'"], run: run, limit: 2)
         try require(String(decoding: normal, as: UTF8.self) == "普通成功", "正常命令输出不符")
         for script in ["trap '' TERM; /bin/sleep 2", "trap 'exit 0' TERM; while :; do :; done"] {
@@ -263,7 +321,7 @@ private struct Mount: Equatable, Codable {
             try require(rejected, "未知镜像清单不能视为分离成功")
         }
         Thread.sleep(forTimeInterval: 2.1)
-        print("普通文件命令回归通过：后端类型8项、正常输出、忽略TERM有界超时、TERM退出0仍失败、后代持stdout不阻塞、有效清单2项及未知结构6项；无设备操作。证据：\(run.path)")
+        print("普通文件命令回归通过：来源路径28项、实际父目录6项、后端类型8项、正常输出、忽略TERM有界超时、TERM退出0仍失败、后代持stdout不阻塞、有效清单2项及未知结构6项；无设备操作。证据：\(run.path)")
     }
     #endif
     private static func verify(image: URL, device: String, bytes: Int64, expected: Binding?, run: URL) throws -> Binding {
@@ -302,12 +360,39 @@ private struct Mount: Equatable, Codable {
         let values = try mounts(for: binding.device)
         try require(values.count == 1, "GUI动作后未找到唯一真实VFS挂载；请保存应用原始错误，不用C回调替代")
         let value = values[0]
-        let type = expectedFileSystemType(readOnly: readOnly)
-        let prefix = "/private/var/db/com.blteam.ntfsworkbench.mounts/\(geteuid())/"
-        let parts = value.path.hasPrefix(prefix) ? value.path.dropFirst(prefix.count).split(separator: "/", omittingEmptySubsequences: false).map(String.init) : []
-        try require(value.type == type && value.owner == 0 && value.readOnly == readOnly && parts.count == 2 && parts.last == "volume" && UUID(uuidString: parts.first ?? "")?.uuidString == parts.first,
-                    "挂载类型、root所有权、只读模式或本应用私有凭据路径不符")
+        // 直接挂载的父目录必须仍是普通用户拥有的私有目录；挂载根内部权限由文件系统提供，不作目录权限推断。
+        let privateParent = value.owner == geteuid()
+            && privateDirectory(at: "/private/tmp/ntfs-writeflow-\(geteuid())", userID: geteuid())
+        try require(mountMatches(value, device: binding.device, readOnly: readOnly, userID: geteuid(),
+                    version: ProcessInfo.processInfo.operatingSystemVersion, directParentIsPrivate: privateParent),
+                    "挂载类型、所有权、只读模式或本应用专用路径不符")
         return value
+    }
+
+    // 与ownedMount共用的纯判定；命令回归不访问任何真实设备。
+    private static func mountMatches(_ value: Mount, device: String, readOnly: Bool, userID: UInt32,
+                                     version: OperatingSystemVersion, directParentIsPrivate: Bool) -> Bool {
+        let prefix = "/private/var/db/com.blteam.ntfsworkbench.mounts/\(userID)/"
+        let parts = value.path.hasPrefix(prefix) ? value.path.dropFirst(prefix.count).split(separator: "/", omittingEmptySubsequences: false).map(String.init) : []
+        guard value.source == device && value.type == expectedFileSystemType(readOnly: readOnly, version: version)
+            && value.readOnly == readOnly else { return false }
+        if value.owner == 0 {
+            return parts.count == 2 && parts.last == "volume"
+                && UUID(uuidString: parts.first ?? "")?.uuidString == parts.first
+        }
+        // 26.4起产品可使用用户直接挂载；旧系统仍只接受原root票据路径。
+        guard version.majorVersion > 26 || (version.majorVersion == 26 && version.minorVersion >= 4),
+              value.owner == userID, directParentIsPrivate else { return false }
+        let directPrefix = "/private/tmp/ntfs-writeflow-\(userID)/"
+        guard value.path.hasPrefix(directPrefix) else { return false }
+        let token = String(value.path.dropFirst(directPrefix.count))
+        return UUID(uuidString: token)?.uuidString == token
+    }
+
+    private static func privateDirectory(at path: String, userID: UInt32) -> Bool {
+        var value = stat()
+        return lstat(path, &value) == 0 && value.st_mode & S_IFMT == S_IFDIR
+            && value.st_uid == userID && value.st_mode & 0o777 == 0o700
     }
 
     private static func expectedFileSystemType(readOnly: Bool, version: OperatingSystemVersion = ProcessInfo.processInfo.operatingSystemVersion) -> String {
