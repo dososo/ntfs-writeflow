@@ -11,22 +11,22 @@
 [![许可](https://img.shields.io/badge/许可-GPL--2.0-168B86.svg)](LICENSE)
 [![macOS](https://img.shields.io/badge/macOS-13%2B-23334B.svg)](#安装)
 [![架构](https://img.shields.io/badge/架构-Intel%20%2B%20Apple%20Silicon-168B86.svg)](#安装)
-[![状态](https://img.shields.io/badge/状态-开发候选-B66C24.svg)](#验证状态与边界)
-[![版本](https://img.shields.io/badge/版本-0.3.0--兼容预览-23334B.svg)](https://github.com/dososo/ntfs-writeflow/releases/tag/v0.3.0)
+[![状态](https://img.shields.io/badge/状态-兼容预览-B66C24.svg)](#验证状态与边界)
+[![版本](https://img.shields.io/badge/版本-0.3.1--兼容预览-23334B.svg)](https://github.com/dososo/ntfs-writeflow/releases/tag/v0.3.1)
 [![技术](https://img.shields.io/badge/SwiftUI%20%2B%20FSKit%20%2B%20NTFS--3G-23334B.svg)](#技术栈与架构)
 
 <p>
-  <a href="https://github.com/dososo/ntfs-writeflow/releases/download/v0.3.0/NTFS-WriteFlow-0.3.0-universal.dmg"><strong>⬇ 下载 Mac 应用（DMG）</strong></a>
+  <a href="https://github.com/dososo/ntfs-writeflow/releases/download/v0.3.1/NTFS-WriteFlow-0.3.1-universal.dmg"><strong>⬇ 下载 Mac 应用（DMG）</strong></a>
   &nbsp;·&nbsp;
-  <a href="https://github.com/dososo/ntfs-writeflow/releases/download/v0.3.0/NTFS-WriteFlow-0.3.0-universal.zip">ZIP 下载</a>
+  <a href="https://github.com/dososo/ntfs-writeflow/releases/download/v0.3.1/NTFS-WriteFlow-0.3.1-universal.zip">ZIP 下载</a>
   &nbsp;·&nbsp;
-  <a href="https://github.com/dososo/ntfs-writeflow/releases/tag/v0.3.0">全部 Release 附件</a>
+  <a href="https://github.com/dososo/ntfs-writeflow/releases/tag/v0.3.1">全部 Release 附件</a>
 </p>
-<p><sub>0.3.0 兼容预览 · Intel 与 Apple Silicon 通用包 · macOS 13 及以上</sub></p>
+<p><sub>0.3.1 兼容预览 · Intel 与 Apple Silicon 通用包 · macOS 13 及以上</sub></p>
 
 </div>
 
-**0.3.1（构建10）正在验收，尚未发布。** 下载仍为0.3.0；Intel通用包、最低macOS13和macFUSE兼容前端是0.3.0已有能力。本轮完善旧FSKit资源能力、准确写入状态和卸载收尾，并修正窗口与平台提示。构建9虽完成VFS步骤，停用错误16仍使完整链失败；构建10的15.4受控镜像完整链已通过，见[发行草案](发布/0.3.1兼容预览发行说明.md)。
+**0.3.1（构建10）兼容预览。** 本轮完善旧FSKit写入、准确状态与正常卸载，15.4受控镜像完整链已过，现代实体盘逐项结果见同版本Release核验附件，本文不声明其已通过。Intel通用包、最低macOS13和macFUSE前端是0.3.0已有能力，见[本版说明](发布/0.3.1兼容预览发行说明.md)。
 
 > 免费开源的 macOS NTFS 工具：查看真实磁盘状态，选择只读或读写挂载，在 Finder 中管理文件，完成操作后正常卸载或安全推出整盘。
 
@@ -84,23 +84,23 @@ NTFS 畅写是一款 **macOS 原生 NTFS 桌面应用**，用SwiftUI集中呈现
 
 **0.3.0 根据用户反馈补齐 Intel 通用包与旧系统实际运行路径**，解决最低系统、窗口 API 和卸载接口阻断，增加 macOS 13～15.3 的真实 macFUSE 读写后端、整盘互斥与最终写回回执。保留 0.2.0 的逐盘自动挂载、登录启动、会话保护与写前预检；自动管理默认关闭。MacFUSE 需用户自行安装批准，目标系统／Intel 硬件仍待验；macOS 27.2 实体盘 Issue #3 保持待复测。[查看本版更新与支持矩阵](发布/0.3.0兼容预览发行说明.md)。
 
-**0.3.1的五项变化（候选）**：
+**0.3.1的五项变化**：
 
-- **旧FSKit同步访问**：修正旧系统模块发现和用户身份，旧协议子类取得资源同步访问能力；15.4～26.3只读使用系统原生NTFS，读写仍FSKit，26.4起两种模式均FSKit。
-- **失败保RO与准确状态**：原只读仍存活时的资源／NTFS预检／身份拒绝保留可读；只有内核RW而内部未就绪时明确提示，刷新或重启不沿用旧成功。
-- **本次挂载独立绑定**：内部准备证明绑定本次卷与介质，跨阶段许可一致；被动查询不启动写入，重挂不能套用迟到的旧证明。
-- **根缓存停用收尾**：补旧系统漏卸载回调，区分FSKit保留的根缓存与真实非根占用；force／实际忙项仍拒，收尾原错锁存。新构建10的15.4受控镜像完整链与内部收尾已通过。
-- **首次构建稳定与探针可复跑**：兼容源码先归档再解包；物理判定使用DA／IOMedia互证，缺失或冲突继续拒。验收工具给出完整构建命令和明确模拟／实际回放入口，不把模拟称实盘通过。
+- **旧FSKit写入兼容**：修正旧系统模块发现、用户身份与资源同步访问；15.4～26.3只读使用系统原生NTFS，读写使用FSKit。
+- **拒绝写入后保持可读**：原只读仍存活时，能力／预检／身份检查失败保留只读；原RO关闭或RW开始后的真实故障不在此保证内。
+- **状态对应当前挂载**：内部准备成功才显示可写；刷新、重启或同盘重挂不沿用旧证明，被动查询不启动写入。
+- **正常卸载收尾**：区分系统根缓存与真实文件占用，补旧系统漏回调收尾；遇忙项或错误保留状态，不强制关闭。
+- **源码构建与验收可复跑**：修复兼容源码首次归档中断，补齐探针构建命令，区分模拟与实际回放，物理身份未知时继续拒绝。
 
 设置／诊断的滚动、长错误及导出可达已并入本版；Apple虚拟机13～15.3的macFUSE内核路径明确拒绝，特殊项和未知事务保护继续保留。13.7.4／14.0只有安装、界面和限制提示等分项，兼容VFS未通过。
 
-[构建10源码](https://github.com/dososo/ntfs-writeflow/commit/206af70bb138252bb090064252a47a8ff2bfec69)已增加根缓存与真实占用的区分：新收尾47项两架构、原四runner两架构及六目标严格检查通过，独立审查无新增确定P0／P1。构建9的VFS步骤通过但停用错误16仍判完整失败。旧FSKit的`nosuid`／`nodev`／`nobrowse`未全部保留，特殊项约束不代替内核保护，Intel实体机与26.0～26.3实际系统仍待验。详细记录见[可核验说明](发布/0.3.1可核验说明.md)。本轮发行基于206af70的475项冻结输入；App与DMG分别公证通过，21文件摘要／大小／权限一致，严格签名、Gatekeeper和stapler检查均退出0。构建10在macOS15.4（24E248）ARM客体的受控镜像完整链及内部sync0／close0／RO重开0已核验通过；本机实盘及最终源码分发仍待验。
+本版的实际范围见[验证状态](#验证状态与边界)。开发回归、历史失败及源码定位集中保留在[可核验说明](发布/0.3.1可核验说明.md)，不作为其他系统或Intel硬件已通过的承诺。
 
 ## 安装
 
 **运行目标**：macOS 13 及以上，Intel 与 Apple Silicon 通用包。已有macOS26.6.2的ARM／Rosetta执行，以及13.7.4／14.0的ARM客体分项实测；后者没有完成兼容后端VFS读写。最低系统构建、Rosetta或虚拟机结果均不等于Intel硬件和旧系统实体机全部验收通过。
 
-下表描述0.3.1候选路由；目前下载按钮仍指向已发布0.3.0，该版路径见其[固定发行说明](发布/0.3.0兼容预览发行说明.md)。
+下表描述0.3.1路由；0.3.0历史路径见其[固定发行说明](发布/0.3.0兼容预览发行说明.md)。
 
 | 系统 | 只读 | 读写 | 服务与前置 |
 | --- | --- | --- | --- |
@@ -113,7 +113,7 @@ NTFS 畅写是一款 **macOS 原生 NTFS 桌面应用**，用SwiftUI集中呈现
 
 Apple虚拟机的13～15.3无法使用该macFUSE内核路径；0.3.1候选会明确拒绝，不应通过重复安装或降低安全保护绕过。15.4及以上的自有FSKit路径不按该规则禁用，实际兼容性仍须分项验证。
 
-从 [0.3.0 兼容预览 Release](https://github.com/dososo/ntfs-writeflow/releases/tag/v0.3.0) 下载 [DMG 安装包](https://github.com/dososo/ntfs-writeflow/releases/download/v0.3.0/NTFS-WriteFlow-0.3.0-universal.dmg) 或 [应用 ZIP](https://github.com/dososo/ntfs-writeflow/releases/download/v0.3.0/NTFS-WriteFlow-0.3.0-universal.zip)。同页提供完整对应源码、`SHA256SUMS.txt` 和分发验证记录。
+从 [0.3.1 兼容预览 Release](https://github.com/dososo/ntfs-writeflow/releases/tag/v0.3.1) 下载 [DMG 安装包](https://github.com/dososo/ntfs-writeflow/releases/download/v0.3.1/NTFS-WriteFlow-0.3.1-universal.dmg) 或 [应用 ZIP](https://github.com/dososo/ntfs-writeflow/releases/download/v0.3.1/NTFS-WriteFlow-0.3.1-universal.zip)。同页提供完整对应源码、`SHA256SUMS.txt` 和分发验证记录。
 
 1. 先校验附件，将 `NTFSWriteFlow.app` 放入个人 `~/Applications` 固定位置。
 2. macOS 15.4 及以上在系统设置启用本应用 FSKit 文件系统扩展；13～15.3 先按官方说明准备 macFUSE。本应用不安装第三方驱动，也不自动修改系统安全设置。
@@ -126,9 +126,13 @@ Apple虚拟机的13～15.3无法使用该macFUSE内核路径；0.3.1候选会明
 
 ## 验证状态与边界
 
-现代系统本轮改用本机macOS26.6.2与已授权5TB外部USB的一轮实际验收，文件写读／同步／占用拒绝／RO重挂结果尚待。不会额外启动26.4 VM；26.4仅处镜像准备，未启动、未通过。只读DA／IOMedia元数据验证不等于实盘文件操作成功。
+本机macOS26.6.2安装时曾遇模块未列出、按App开关回关；PluginKit登记不代表已启用。[macFUSE维护者说明](https://github.com/macfuse/macfuse/issues/1194#issuecomment-5470510841)指出按App入口存在已知系统问题，建议改用按类别；但本机按类别也只列出3个Apple模块，因此不能据此认定本应用根因或宣称已修复。处理与最终结果见同版本Release核验附件。
 
-当前构建10的15.4受控镜像同包VFS与内部收尾已通过；App／DMG公证及制品检查已完成，最终源码分发和回下载仍待。构建9VFS工具退出0但deactivate Code16，完整链失败；13.7.4／14.0仍只有安装／界面等分项，兼容VFS未通过。阶段四构建8的负向保RO和正常清理不等于正向RW。各阶段见[可核验说明](发布/0.3.1可核验说明.md)。
+Intel实体机与13～15.3实体兼容内核尚未验收，Rosetta和最低系统构建不代替这些实际硬件证据。
+
+现代实体盘本轮逐项结果以同版本Release核验附件为准；本源码说明不声明该项已通过。26.4仅完成镜像准备，未启动、未通过；只读DA／IOMedia元数据不等于本产品文件操作验收。
+
+当前构建10的15.4受控镜像同包VFS与内部收尾已通过；App／DMG公证及制品检查已完成，最终源码对应、分发与回下载记录见同版本Release核验附件。构建9VFS工具退出0但deactivate Code16，完整链失败；13.7.4／14.0仍只有安装／界面等分项，兼容VFS未通过。阶段四构建8的负向保RO和正常清理不等于正向RW。各阶段见[可核验说明](发布/0.3.1可核验说明.md)。
 
 以下表格保留历史版本分项；已发布0.3.0范围以其[发行说明](发布/0.3.0兼容预览发行说明.md)、[可核验说明](发布/0.3.0可核验说明.md)和Release附件为准：
 
@@ -139,7 +143,7 @@ Apple虚拟机的13～15.3无法使用该macFUSE内核路径；0.3.1候选会明
 | 权限与错误 | 管理员服务策略、真实文件 ACL、XPC 句柄传递、错误签名拒绝、同步失败与生命周期测试。 |
 | 0.1.1 整盘推出 | 实际外部固定 USB 硬盘通过应用安全推出，独立核对原介质、无挂载和全树关闭状态；测试镜像经 GUI 读写挂载、弹出后映射与原对象消失，65,573 字节文件经离线工具复读 SHA-256 一致；314 项非设备回归及 5 项系统弹出集成用例通过。此次真实盘弹出验收未新增测试写入。 |
 
-已发布的0.3.0应用完成了Developer ID签名、Apple公证、票据装订和本机Gatekeeper核验，DMG与ZIP对应同一构建，并完成冻结源码离线重建。具体产物身份和验证范围见该Release附件 `分发验证摘要.json`、`构建对应记录.json` 与 `SHA256SUMS.txt`。0.3.1候选的正式签名不等于最终发行完成，最终VFS和分发结果仍待补齐；公证也不代表全部兼容性已经验证。
+已发布的0.3.0应用完成了Developer ID签名、Apple公证、票据装订和本机Gatekeeper核验，DMG与ZIP对应同一构建，并完成冻结源码离线重建。具体产物身份和验证范围见该Release附件 `分发验证摘要.json`、`构建对应记录.json` 与 `SHA256SUMS.txt`。0.3.1候选的正式签名不等于最终发行完成，其他环境VFS和最终分发结果以同版本Release核验附件为准；公证也不代表全部兼容性已经验证。
 
 **尚未完成**：Windows 读取与写回、Windows 文件系统检查、真实掉电与异常拔插、睡眠唤醒、长期压力、真实多用户隔离、全新 Mac 安装与完整卸载。格式化、完整校验修复及通知等原定能力尚未全部交付；登录启动与每卷偏好已实现，真实登录和跨账户仍待验收。测试过专用目录不代表核验过整盘原有数据。
 
