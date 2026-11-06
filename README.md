@@ -88,7 +88,7 @@ macOS自带的NTFS访问通常只能读取。NTFS畅写把查看状态、选择�
 
 [![你们提的建议，做进新版了](https://dososo.github.io/ntfs-writeflow/update-0.3.1-cover-16x9.png)](https://dososo.github.io/ntfs-writeflow/)
 
-[在线观看更新片](https://dososo.github.io/ntfs-writeflow/) · [下载16:9影片](https://dososo.github.io/ntfs-writeflow/update-0.3.1-16x9-r2.mp4) · [影片内容与素材说明](发布/0.3.1更新片与发布素材.md)
+[在线观看更新片](https://dososo.github.io/ntfs-writeflow/) · [下载16:9影片](https://github.com/dososo/ntfs-writeflow/releases/download/v0.3.1/NTFS-WriteFlow-0.3.1-update-16x9.mp4) · [影片内容与素材说明](发布/0.3.1更新片与发布素材.md)
 
 影片包含本轮0.3.1（11）的设置、逐盘规则和诊断真实界面，以及已标注版本的0.1.1历史镜像操作；其余变化用功能图解说明。录制界面没有开启自动管理或执行磁盘挂载，不能把演示当作新增实盘验收。
 
