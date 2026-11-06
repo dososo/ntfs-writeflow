@@ -12,7 +12,7 @@ struct ExtensionDiagnostic {
 
     static func fsKitResult(moduleEnabled: Bool?, version: OperatingSystemVersion) -> ExtensionDiagnostic {
         guard let moduleEnabled else {
-            let canAttempt = version.majorVersion < 26 && (version.majorVersion > 15 || (version.majorVersion == 15 && version.minorVersion >= 4))
+            let canAttempt = version.majorVersion > 15 || (version.majorVersion == 15 && version.minorVersion >= 4)
             return ExtensionDiagnostic(title: canAttempt ? "系统枚举未列出本应用扩展" : "尚未发现本应用扩展",
                 detail: canAttempt ? "请先在系统设置 → 通用 → 登录项与扩展 → 按类别 → 文件系统扩展中启用 NTFSFileSystem，再手动尝试挂载。正常系统挂载会继续核验授权与模块可用性；自动管理保持暂停。" : "系统尚未列出本应用的 NTFS 扩展。",
                 isEnabled: false, allowsManualMountWhenUnlisted: canAttempt)

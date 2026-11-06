@@ -7,7 +7,7 @@ import Foundation
             checks.append(name)
             if !condition { failures.append(name) }
         }
-        for (major, minor, allowed) in [(13, 7, false), (15, 3, false), (15, 4, true), (15, 7, true), (25, 0, true), (26, 0, false), (27, 0, false)] {
+        for (major, minor, allowed) in [(0, 0, false), (13, 7, false), (14, 6, false), (15, 3, false), (15, 4, true), (15, 7, true), (25, 0, true), (26, 0, true), (26, 4, true), (26, 6, true), (27, 0, true)] {
             let version = OperatingSystemVersion(majorVersion: major, minorVersion: minor, patchVersion: 0)
             let missing = ExtensionDiagnostic.fsKitResult(moduleEnabled: nil, version: version)
             check("\(major).\(minor)枚举缺失的手动边界", missing.canAttemptManualMount == allowed)
