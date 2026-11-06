@@ -22,7 +22,8 @@ ENGINE="$BASE/engine-$ARCH-13"
 OUT="$BASE/$ARCH"
 mkdir -p "$SOURCE" "$ENGINE" "$OUT"
 if [[ ! -f "$SOURCE/configure" ]]; then
-  git -C ThirdParty/ntfs-3g archive "$PIN" | tar -xf - -C "$SOURCE"
+  git -C ThirdParty/ntfs-3g archive --format=tar --output="$BASE/固定引擎源码.tar" "$PIN"
+  tar -xf "$BASE/固定引擎源码.tar" -C "$SOURCE"
   cp ThirdParty/NTFSBridge/libgcrypt.m4 "$SOURCE/m4/libgcrypt.m4"
   (cd "$SOURCE"; glibtoolize --force --copy --install; LIBTOOLIZE=glibtoolize autoreconf -fi -I m4)
 fi
