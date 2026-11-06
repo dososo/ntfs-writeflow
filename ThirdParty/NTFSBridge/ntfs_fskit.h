@@ -135,6 +135,8 @@ int      nfsk_seek_region(ntfs_fskit_volume *v, uint64_t ino, int64_t offset,
 int      nfsk_open_item(ntfs_fskit_volume *v, uint64_t ino);
 /* 只读查询真实打开登记；调用方与其他桥接操作一样持卷锁。无打开为0，有为1，错误为负errno。 */
 int      nfsk_has_open_items(ntfs_fskit_volume *v);
+/* 只读查询非根打开登记；根项可被FSKit缓存至停用，其他语义同上。 */
+int      nfsk_has_open_nonroot_items(ntfs_fskit_volume *v);
 int      nfsk_close_item(ntfs_fskit_volume *v, uint64_t ino);
 int      nfsk_rename(ntfs_fskit_volume *v, uint64_t src_dir, const char *src_name,
                      uint64_t dst_dir, const char *dst_name);

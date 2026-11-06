@@ -73,7 +73,39 @@ struct LegacyDeactivation {
         calls(0, 0, "正常unmount后deactivate不得重复IO")
         v.teardown(); check(c.cleanups == 3, "重复激活后每个包装器只释放一次")
 
+        let queryCounter = Counter(); let queryBackend = try backend(image, true, queryCounter)
+        var queryError: Int32 = 0
+        guard let queryHandle = nfsk_mount(queryBackend.backend, false, &queryError) else { throw posixError(queryError) }
+        check(nfsk_has_open_items(queryHandle) == 0 && nfsk_has_open_nonroot_items(queryHandle) == 0, "空登记两查询均为0")
+        check(nfsk_open_item(queryHandle, NFSK_ROOT_INO) == 0, "真实C根项登记成功")
+        check(nfsk_has_open_items(queryHandle) == 1 && nfsk_has_open_nonroot_items(queryHandle) == 0, "通用查询保根语义，仅新查询排根")
+        let queryFile = nfsk_lookup(queryHandle, NFSK_ROOT_INO, "停用复读.txt", &queryError)
+        check(queryFile != 0 && queryError == 0 && nfsk_open_item(queryHandle, queryFile) == 0, "真实C非根文件登记成功")
+        check(nfsk_has_open_items(queryHandle) == 1 && nfsk_has_open_nonroot_items(queryHandle) == 1, "根与非根并存仍报告非根忙")
+        check(nfsk_close_item(queryHandle, queryFile) == 0 && nfsk_has_open_nonroot_items(queryHandle) == 0
+            && nfsk_has_open_items(queryHandle) == 1, "关闭非根不偷偷清除根登记")
+        check(nfsk_close_item(queryHandle, NFSK_ROOT_INO) == 0 && nfsk_has_open_items(queryHandle) == 0, "通用最终close根仍正常")
+        check(nfsk_has_open_nonroot_items(nil) == -EINVAL, "新查询无卷时不能伪造无占用")
+        check(nfsk_umount(queryHandle) == 0, "查询测试正常收尾")
+        nfsk_backend_free(queryBackend.backend); queryBackend.cleanup()
+
+        let cached = Counter(); let (cachedVolume, cachedRoot) = try mounted(image, cached)
+        // 15.4保留根项到deactivate；普通用户FD已由kernel正常卸载门槛确认不再占用。
+        try await cachedVolume.openItem(cachedRoot, modes: [.read])
+        nfsk_test_reset_calls()
+        try await cachedVolume.synchronize(flags: .wait)
+        try await cachedVolume.deactivate()
+        calls(2, 1, "仅根缓存不应阻止helper同步后的旧系统正常收尾")
+        check(cached.status?.state == .ready, "根缓存收尾成功才ready")
+        let cachedRORoot = try cachedVolume.activate(taskOptions: ["ro"])
+        let (cachedFile, _) = try await cachedVolume.lookupItem(named: FSFileName(string: "停用复读.txt"), inDirectory: cachedRORoot)
+        let cachedValue = try await cachedVolume.xattr(named: FSFileName(string: "com.blteam.close-proof"), of: cachedFile)
+        check(cachedValue == payload, "根缓存收尾后原数据仍可RO重激活读取")
+        nfsk_test_reset_calls(); try await cachedVolume.deactivate(); calls(0, 0, "根缓存处理后RO停用不重复IO")
+        cachedVolume.teardown(); check(cached.cleanups == 2, "根缓存收尾包装器仅释放一次")
+
         let busy = Counter(); let (b, br) = try mounted(image, busy)
+        try await b.openItem(br, modes: [.read])
         let (bf, _) = try await b.lookupItem(named: FSFileName(string: "停用复读.txt"), inDirectory: br)
         try await b.openItem(bf, modes: [.read]); try await b.openItem(bf, modes: [.read])
         let busyBefore = try Data(contentsOf: URL(fileURLWithPath: image))
@@ -86,7 +118,8 @@ struct LegacyDeactivation {
         try await b.deactivate(); calls(1, 1, "最终close后才允许正常停用")
         b.teardown()
 
-        let force = Counter(); let (f, _) = try mounted(image, force)
+        let force = Counter(); let (f, forceRoot) = try mounted(image, force)
+        try await f.openItem(forceRoot, modes: [.read])
         let forceBefore = try Data(contentsOf: URL(fileURLWithPath: image))
         nfsk_test_reset_calls(); await rejects(EBUSY) { try await f.deactivate(options: [.force]) }
         check((try? Data(contentsOf: URL(fileURLWithPath: image))) == forceBefore, "force拒绝不改变普通镜像字节")

@@ -612,6 +612,14 @@ int nfsk_has_open_items(ntfs_fskit_volume *v) {
     return 0;
 }
 
+/* 旧FSKit停用前仍可缓存根项；这里只排除根，其他文件和目录继续按实际登记拒绝。 */
+int nfsk_has_open_nonroot_items(ntfs_fskit_volume *v) {
+    if (!v || !v->vol || !v->devctx) return -EINVAL;
+    for (nfsk_open_ref *entry = v->devctx->open_items; entry; entry = entry->next)
+        if (entry->open && MREF(entry->ref) != (u64)FILE_root) return 1;
+    return 0;
+}
+
 int nfsk_umount(ntfs_fskit_volume *v) {
     if (!v) return 0;
     int error = 0;

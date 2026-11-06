@@ -296,11 +296,16 @@ class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperations,
 
     func deactivate(options: FSDeactivateOptions = []) async throws {
         let closed = try withLock {
+            if #unavailable(macOS 26.0) {
+                NSLog("[blntfs] 停用输入：强制=\(options.contains(.force)) 旧策略=\(legacyActivationPolicy != nil) 已挂载=\(mounted) 有句柄=\(handle != nil) 原收尾错误=\(deactivationFailure != nil)")
+            }
             if let failure = deactivationFailure { throw failure }
             if mounted, legacyActivationPolicy != nil {
                 // 15.4实际正常卸载可能漏掉unmount回调；仅旧路径补同一收尾，不允许force或仍有打开项。
                 guard !options.contains(.force), let h = handle else { throw posixError(EBUSY) }
-                let opened = nfsk_has_open_items(h)
+                // 根项由FSKit保留到卷停用，不等于仍有用户FD；真实占用先由正常kernel卸载拒绝。
+                let opened = nfsk_has_open_nonroot_items(h)
+                NSLog("[blntfs] 旧系统停用打开登记：全部=\(nfsk_has_open_items(h)) 非根=\(opened)")
                 guard opened == 0 else { throw posixError(opened < 0 ? -opened : EBUSY) }
                 NSLog("[blntfs] 旧系统停用补收尾开始")
                 do {

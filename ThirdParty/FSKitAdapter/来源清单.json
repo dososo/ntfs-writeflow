@@ -24,7 +24,7 @@
       "文件": "ntfs3gVolume.swift",
       "上游路径": "ntfs3g/ntfs3gVolume.swift",
       "上游SHA256": "7f529f9540196c61c57434a5b9986302b716c167c8e3144de9a46972c64515cc",
-      "本地SHA256": "b53a724a0b732e8306b666663e0720e439f60687590eba37b573f568ad343f17"
+      "本地SHA256": "d8fff93b53f17f470f3dc83323919c8712cbf03ec8c2250e447e4f7457b2ce04"
     },
     {
       "文件": "ntfs_device_fskit.m",
