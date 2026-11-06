@@ -1,6 +1,7 @@
 import Foundation
 import Darwin
 import IOKit
+import DiskArbitration
 
 // 仅查询真实挂载提供方和当前IOMedia；不挂载、卸载或打开原始设备。
 @main enum TargetProbe {
@@ -28,12 +29,39 @@ import IOKit
               IORegistryEntryInPlane(media,kIOServicePlane) != 0,
               MountedFileSystemReader.read(descriptor:directory) == before,
               let capacity = IORegistryEntryCreateCFProperty(media,"Size" as CFString,nil,0)?.takeRetainedValue() as? NSNumber else { exit(5) }
-        let internalDisk = info["Internal"] as? Bool ?? true
-        let virtualKind = info["VirtualOrPhysical"] as? String
+        // 依据持有的DA/IOMedia父链，不把diskutil缺省键当作实体或镜像。
+        guard let session = DASessionCreate(nil), let disk = DADiskCreateFromBSDName(nil, session, device),
+              let wholeDisk = DADiskCopyWholeDisk(disk),
+              let description = DADiskCopyDescription(disk) as? [String: Any],
+              let whole = DADiskCopyDescription(wholeDisk) as? [String: Any] else { exit(5) }
+        let daMedia = DADiskCopyIOMedia(disk), wholeMedia = DADiskCopyIOMedia(wholeDisk)
+        defer { if daMedia != 0 { IOObjectRelease(daMedia) }; if wholeMedia != 0 { IOObjectRelease(wholeMedia) } }
+        var daMediaID: UInt64 = 0, wholeID: UInt64 = 0
+        let wholeName = whole[kDADiskDescriptionMediaBSDNameKey as String] as? String
+        let expectedWhole = info["WholeDisk"] as? Bool == true ? device : info["ParentWholeDisk"] as? String
+        guard daMedia != 0, wholeMedia != 0, IORegistryEntryInPlane(wholeMedia, kIOServicePlane) != 0,
+              IORegistryEntryGetRegistryEntryID(daMedia, &daMediaID) == KERN_SUCCESS, daMediaID == mediaID,
+              IORegistryEntryGetRegistryEntryID(wholeMedia, &wholeID) == KERN_SUCCESS, wholeID > 0,
+              description[kDADiskDescriptionMediaBSDNameKey as String] as? String == device,
+              wholeName != nil, wholeName == expectedWhole,
+              (description[kDADiskDescriptionMediaSizeKey as String] as? NSNumber)?.int64Value == capacity.int64Value else { exit(5) }
+        let properties = IORegistryEntrySearchCFProperty(wholeMedia, kIOServicePlane,
+            "Protocol Characteristics" as CFString, kCFAllocatorDefault,
+            IOOptionBits(kIORegistryIterateRecursively | kIORegistryIterateParents)) as? [String: Any]
+        let daInternal = PhysicalMediaEvidence.boolean(whole[kDADiskDescriptionDeviceInternalKey as String])
+        let daProtocol = whole[kDADiskDescriptionDeviceProtocolKey as String] as? String
+        let virtual = PhysicalMediaEvidence.virtual(info: info, daInternal: daInternal, daProtocol: daProtocol, properties: properties)
+        let internalDisk = PhysicalMediaEvidence.boolean(info["Internal"])
         var directoryStat=stat()
-        guard fstat(directory,&directoryStat)==0 else { exit(5) }
+        var repeatedID: UInt64 = 0
+        guard fstat(directory,&directoryStat)==0, MountedFileSystemReader.read(descriptor:directory) == before,
+              IORegistryEntryInPlane(media,kIOServicePlane) != 0, IORegistryEntryInPlane(wholeMedia,kIOServicePlane) != 0,
+              IORegistryEntryGetRegistryEntryID(media,&repeatedID)==KERN_SUCCESS, repeatedID == mediaID else { exit(5) }
         var result:[String:Any] = ["provider":before.type,"mount_owner_uid":before.ownerID,"media_id":mediaID,"capacity":capacity.int64Value,
-            "internal":internalDisk,"virtual":virtualKind != "Physical","read_only":before.isReadOnly,
+            "internal":internalDisk as Any? ?? NSNull(),"virtual":virtual as Any? ?? NSNull(),"read_only":before.isReadOnly,
+            "whole_media_id":wholeID,"whole_device":wholeName!,
+            "physical_evidence":["da_internal":daInternal as Any? ?? NSNull(),"da_protocol":daProtocol as Any? ?? NSNull(),
+                "interconnect":properties?["Physical Interconnect"] ?? NSNull(),"location":properties?["Physical Interconnect Location"] ?? NSNull()],
             "directory_empty_acl":BenchmarkIsolation.emptyACL(directory),"directory_device":directoryStat.st_dev,"directory_inode":directoryStat.st_ino,
             "source":before.source,"mount_identity":before.identity,"mount_point":before.mountPoint]
         if let isolation=BenchmarkIsolation.proof(path:CommandLine.arguments[1],mounted:before) { result["isolation"]=isolation }
