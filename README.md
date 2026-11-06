@@ -84,6 +84,14 @@ macOS自带的NTFS访问通常只能读取。NTFS畅写把查看状态、选择�
 
 发现其他磁盘驱动、身份不明或会话未确认时会暂停。锁屏／睡眠后不能沿用旧确认。当前没有20轮实体插盘、真实登录与跨账户全部通过的结论。
 
+## 64秒看这次更新
+
+[![你们提的建议，做进新版了](https://dososo.github.io/ntfs-writeflow/update-0.3.1-cover-16x9.png)](https://dososo.github.io/ntfs-writeflow/)
+
+[在线观看更新片](https://dososo.github.io/ntfs-writeflow/) · [下载16:9影片](https://dososo.github.io/ntfs-writeflow/update-0.3.1-16x9-r2.mp4) · [影片内容与素材说明](发布/0.3.1更新片与发布素材.md)
+
+影片包含本轮0.3.1（11）的设置、逐盘规则和诊断真实界面，以及已标注版本的0.1.1历史镜像操作；其余变化用功能图解说明。录制界面没有开启自动管理或执行磁盘挂载，不能把演示当作新增实盘验收。
+
 ## 界面与历史演示
 
 <img src="assets/screenshots/main.jpg" width="85%" alt="NTFS畅写磁盘列表与操作入口" />
