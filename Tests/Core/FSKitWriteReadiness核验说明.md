@@ -1,6 +1,6 @@
 # 旧FSKit内部准备与准确状态核验
 
-0.3.1（构建8）源码已整合提交为[2347927](https://github.com/dososo/ntfs-writeflow/commit/23479279258f1887eada9c6d6b676d9583d92c05)。范围包含共享协议、管理员探针与恢复查询、FSKit适配层、C状态接口和应用状态，已不是单独执行者的私有交接。阶段四同版本通用Release构建、正式签名与`codesign --verify --strict`通过，未公证、未做新候选VM验收、未发布，没有构建8真实客体或完整VFS通过结论。第一份构建8因预检收尾P1阻断保留不可用，不混作当前阶段四候选。
+当前为[0.3.1（构建10）源码206af70](https://github.com/dososo/ntfs-writeflow/commit/206af70bb138252bb090064252a47a8ff2bfec69)，尚未发布。222019a根缓存候选收尾47项／架构、原四runner双架构及六目标0、独审已通过；构建10在15.4受控镜像同包完整链已通过，下载仍为0.3.0。 构建9真实VFS步骤完成但deactivate16，完整失败；重启登记／交互中断另列，不把旧公证沿用于10。本轮发行基于206af70的475项冻结输入；App与DMG分别公证通过，21文件摘要／大小／权限一致，严格签名、Gatekeeper和stapler检查均退出0。构建10在macOS15.4（24E248）ARM客体的受控镜像完整链及内部sync0／close0／RO重开0已核验通过；本机实盘及最终源码分发仍待验。
 
 ## 一、可检查行为
 
@@ -30,8 +30,8 @@
 
 ```sh
 bash Tests/Core/run_write_readiness_tests.sh
-bash Tests/Engine/run_write_capability.sh
-bash Tests/Engine/run_write_ready.sh
+NTFS_TEST_ENGINE_ROOT="$PWD/build/engine" bash Tests/Engine/run_write_capability.sh
+NTFS_TEST_ENGINE_ROOT="$PWD/build/engine" bash Tests/Engine/run_write_ready.sh
 NTFS_TEST_ARCH=arm64 bash Tests/Core/run_eject_tests.sh
 NTFS_TEST_ARCH=x86_64 bash Tests/Core/run_eject_tests.sh
 ```
@@ -42,14 +42,18 @@ NTFS_TEST_ARCH=x86_64 bash Tests/Core/run_eject_tests.sh
 
 ## 四、推断与需要人工确认
 
-回执必须来自扩展完成真实内部准备，不能只重复内核RW。资源公开flush返回成功不证明后续每一次写入永远成功；2秒为客户端调度预算，尚未用真实延迟XPC验证墙钟时延。RO保留后系统notReady状态是否仍允许真实读取和正常卸载，也须客体验收。
+回执必须来自扩展完成真实内部准备，不能只重复内核RW。资源公开flush返回成功不证明后续每一次写入永远成功；2秒为客户端调度预算，尚未用真实延迟XPC验证墙钟时延。阶段四构建8已真实负向观察notReady后根可读及正常清理；不能外推构建9正向写入、所有失败或所有系统。
 
 ## 五、收尾P1修复与未覆盖
 
 **阶段四2347927已修复并独立审查：** 原先7535d05的预检拒绝空handle／sync ENXIO问题，改为仅旧分支在原RO存活时完成只读预检、身份与包装器准备；失败锁存保RO，成功后才关闭并转移。三个runner双架构及六目标检查全0，新增测试实际先sync再unmount／deactivate；原RO关闭失败精确清理未转移包装器，RW开始后的sync／sticky／close错误仍拒绝。保RO不扩大到这些真实IO错误，空handle同步仍ENXIO。
 
-构建8尚未在15.4实际验证root根FD／xattr、失联助手、超时租约、真实准备／状态、正常VFS读写／同步／忙句柄／卸载／重挂。没有Intel实体机或旧系统实体机结论。Rosetta、模拟系统版本、内存模型与严格编译不能代替这些验收；f9和IOKit实验的EIO／卸载失败保留。
+阶段四构建8已有实际根prepare到flush EIO、刷新／重启后未就绪、正常GUI卸载和分离、最终镜像与模板摘要相同的负向证据，原结果false不变。构建9旧子类和收尾组合五runner／六目标全0；新增停用33项两架构覆盖真实C活动open／force拒绝、sync／close首错锁存、RO同实例再激活和再次RW，现代noIO不变。
+
+**构建10本次同包已过：** 新根缓存仅在旧deactivate排除FILE_root，通用C查询不改，非根busy和force仍拒；47项两架构、四runner两架构和六目标0。15.4本次受控镜像正向准备、写读／同步、busy拒绝、RO重挂与正常分离通过；同模块全部打开1／非根0，明确sync0／close0／RO重开0。不据此追认构建9当时根因，也不证明收尾失败能传回App；公开有效位与现代系统路径边界仍保留。
+
+现代系统本轮改用本机macOS26.6.2与已授权5TB外部USB的一轮实际验收，文件写读／同步／占用拒绝／RO重挂结果尚待。不会额外启动26.4 VM；26.4仅处镜像准备，未启动、未通过。只读DA／IOMedia元数据验证不等于实盘文件操作成功。
 
 ## 六、最小回滚
 
-没有已发布构建8安装包需要撤回。可停止制品提升；若回滚源码，应将共享协议、助手、适配层、C状态接口和应用状态作为依赖整体撤回并重建，不能只删除共享文件或放宽门禁。失败或未知时保留诊断、票据、锁及回执，不删除现场或强制卸载来继续。
+没有已发布0.3.1安装包需要撤回。可停止制品提升；若回滚源码，应将共享协议、助手、适配层、C状态接口和应用状态作为依赖整体撤回并重建，不能只删除共享文件或放宽门禁。失败或未知时保留诊断、票据、锁及回执，不删除现场或强制卸载来继续。
