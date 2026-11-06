@@ -25,7 +25,8 @@ git -C "$SOURCE" diff --quiet
 git -C "$SOURCE" diff --cached --quiet
 mkdir -p "$WORK/source" "$BUILD"
 if [[ ! -f "$WORK/source/configure" ]]; then
-  git -C "$SOURCE" archive "$PIN" | tar -xf - -C "$WORK/source"
+  git -C "$SOURCE" archive --format=tar --output="$WORK/固定引擎源码.tar" "$PIN"
+  tar -xf "$WORK/固定引擎源码.tar" -C "$WORK/source"
   cp "$ROOT/ThirdParty/NTFSBridge/libgcrypt.m4" "$WORK/source/m4/libgcrypt.m4"
   (cd "$WORK/source"; glibtoolize --force --copy --install; LIBTOOLIZE=glibtoolize autoreconf -fi -I m4)
 fi
