@@ -150,6 +150,44 @@ import AppKit
   model.autoStatus = "会话状态尚未核实，请打开应用确认。"
   await model.refreshAutoEnvironment()
   precondition(model.autoStatus.contains("自动挂载监控中"),"活动会话重新核验后应清除旧的未核实提示")
-  print("AppModel事件集成通过：启动屏障、新接入挂载回读、手工抑制、操作中撤销不放锁、7类查询中取消与分盘边界、2类旧规则排队事件及缺令牌拒绝。未调用真实磁盘。")
+  let beforeUnlisted = fixture.mounts
+  let unlistedMonitorEpoch = model.autoMonitorEpoch
+  let unlistedSessionEpoch = model.autoSessionRevocationEpoch
+  let unlistedPolicyEpoch = model.autoPolicyEpoch
+  for (major, minor) in [(15,4),(26,0),(26,4),(26,6),(27,0)] {
+   model.extensionDiagnostic = ExtensionDiagnostic.fsKitResult(moduleEnabled:nil,
+    version:OperatingSystemVersion(majorVersion:major,minorVersion:minor,patchVersion:0))
+   precondition(model.extensionDiagnostic.canAttemptManualMount,"枚举漏报允许手动进入系统核验")
+   precondition(model.autoEnabled && model.autoEnvironment.isClear && model.mountHelperEnabled && model.autoRuntime?.sessionAllowed?() == true,"每个版本的自动环境及会话必须保持就绪")
+   guard model.autoMonitorEpoch == unlistedMonitorEpoch && model.autoSessionRevocationEpoch == unlistedSessionEpoch && model.autoPolicyEpoch == unlistedPolicyEpoch else {
+    print("失败：\(major).\(minor)在监控停止或会话撤销后测试，未证明扩展边界")
+    exit(1)
+   }
+   precondition(!model.isOperating && !model.autoIsOperating && model.autoPolicyStore.mode(for:fingerprint) == .readWrite,"每个版本须保持无操作占用且已开启此盘政策")
+   model.autoStatus = "该版本事件尚未处理"
+   await model.processAutoEvent(DiskEvent(kind:.intercepted,snapshot:fixture.event,isStartup:false,authorizationEpoch:model.autoPolicyEpoch))
+   precondition(fixture.mounts == beforeUnlisted && !model.extensionDiagnostic.isEnabled,"枚举漏报的手动资格不得放行自动挂载")
+   precondition(model.autoStatus == "扩展或管理员挂载服务尚未就绪。","每个版本须实际经过自动考虑并因扩展未就绪拒绝")
+   print("枚举漏报自动边界 \(major).\(minor)：会话／环境就绪，实际扩展拒绝，挂载0调用")
+  }
+  model.stopMonitoring()
+  model.autoEnabled = false
+  model.inventoryIsCurrent = true
+  model.errorMessage = nil
+  await model.mount(fixture.record(),readOnly:true)
+  guard model.errorMessage?.contains("卷身份已变化") == true else {
+   print("失败：枚举漏报应通过手动诊断入口，但仍由真实DiskService在无绑定身份时拒绝；实际：\(model.errorMessage ?? "无错误")")
+   exit(1)
+  }
+  precondition(!model.inventoryIsCurrent && model.operationMessage == nil && fixture.mounts == beforeUnlisted,"身份前置拒绝不能报成功或触发模拟自动后端")
+  for (major, minor) in [(15,4),(26,0),(26,4),(26,6),(27,0)] {
+   model.extensionDiagnostic = ExtensionDiagnostic.fsKitResult(moduleEnabled:false,
+    version:OperatingSystemVersion(majorVersion:major,minorVersion:minor,patchVersion:0))
+   model.inventoryIsCurrent = true
+   model.errorMessage = nil
+   await model.mount(fixture.record(),readOnly:true)
+   precondition(model.errorMessage?.contains("启用") == true && model.inventoryIsCurrent,"明确禁用必须在DiskService前拒绝")
+  }
+  print("AppModel事件集成通过：启动屏障、新接入挂载回读、手工抑制、操作中撤销不放锁、7类查询中取消与分盘边界、2类旧规则排队事件、缺令牌拒绝、枚举漏报自动0调用、手动仍受真实身份前置拒绝与明确禁用拒绝。未调用真实磁盘。")
  }
 }

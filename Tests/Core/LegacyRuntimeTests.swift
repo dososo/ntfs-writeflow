@@ -37,11 +37,14 @@ import Security
               SecCodeCopySigningInformation(ownCode, SecCSFlags(rawValue: kSecCSSigningInformation), &information) == errSecSuccess,
               let ownMetadata = information as NSDictionary?,
               ownMetadata[kSecCodeInfoTeamIdentifier] as? String == "ALV8Y54GCY",
-              ownMetadata[kSecCodeInfoIdentifier] as? String != "com.blteam.ntfsworkbench.legacy" else {
+              ownMetadata[kSecCodeInfoIdentifier] as? String == PrivilegedMountConfiguration.helperIdentifier else {
             fputs("测试前置无效：助手必须有本应用团队的完整有效签名，且标识不能为legacy；不能以缺失或假签名代替错误标识反例。\n", stderr)
             exit(EX_DATAERR)
         }
         rejected("同一应用团队的其他标识也不能冒充legacy程序") { try LegacyRuntime.verifyExecutableSignature(at: ownHelper) }
+        try LegacyRuntime.verifyMountHelperSignature(at: ownHelper)
+        checks.append("真实已签名助手的固定Team与精确helper标识通过所有架构严格验签")
+        rejected("官方macFUSE程序不能冒充本应用助手") { try LegacyRuntime.verifyMountHelperSignature(at: library) }
         rejected("缺失路径不能冒充有效运行时") { try LegacyRuntime.verifySignature(at: fixture + "/不存在") }
         let temporary = "/private/tmp/WriteFlow-运行时验证-\(UUID().uuidString)"
         precondition(mkdir(temporary, 0o700) == 0)
@@ -146,6 +149,21 @@ import Security
         precondition(pwrite(mutable, &byte, 1, offset) == 1)
         close(mutable)
         rejected("篡改官方通用库的首个架构后严格签名拒绝") { try LegacyRuntime.verifySignature(at: changed) }
+        let changedHelper = temporary + "/篡改助手副本"
+        try FileManager.default.copyItem(atPath: ownHelper, toPath: changedHelper)
+        defer { precondition(unlink(changedHelper) == 0) }
+        precondition(chmod(changedHelper, 0o600) == 0)
+        let mutableHelper = open(changedHelper, O_RDWR | O_NOFOLLOW | O_CLOEXEC)
+        precondition(mutableHelper >= 0)
+        precondition(pread(mutableHelper, &header, header.count, 0) == header.count)
+        let helperSlice = Array(header.prefix(4)) == [0xca, 0xfe, 0xba, 0xbe]
+            ? header[16..<20].reduce(UInt32(0)) { ($0 << 8) | UInt32($1) } : 0
+        let helperOffset = off_t(helperSlice) + 4096
+        precondition(pread(mutableHelper, &byte, 1, helperOffset) == 1)
+        byte ^= 1
+        precondition(pwrite(mutableHelper, &byte, 1, helperOffset) == 1)
+        close(mutableHelper)
+        rejected("篡改真实助手副本后严格签名拒绝，不执行副本") { try LegacyRuntime.verifyMountHelperSignature(at: changedHelper) }
         rejected("当前自有普通目录不能冒充root私有runtime链") {
             try LegacyRuntime.validateCacheDirectory(directory, userID: 501, token: token)
         }

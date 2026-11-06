@@ -17,7 +17,7 @@ HELPER_ARGS=(-import-objc-header Sources/PrivilegedHelper/Helper-Bridging-Header
   Sources/Core/VolumeRecord.swift Sources/HelperShared/*.swift
   Sources/App/Services/MountedFileSystemReader.swift
   Sources/PrivilegedHelper/HelperMedia.swift Sources/PrivilegedHelper/HelperNamespace.swift
-  Sources/PrivilegedHelper/HelperEject.swift Sources/PrivilegedHelper/ManagedUnmount.swift
+  Sources/PrivilegedHelper/HelperEject.swift Sources/PrivilegedHelper/ManagedUnmount.swift Sources/PrivilegedHelper/FSKitWriteProbe.swift
   Sources/PrivilegedHelper/LegacyMountProcess.swift Sources/PrivilegedHelper/PrivilegedMountService.swift)
 xcrun swiftc "${SWIFT_ARGS[@]}" Sources/Core/VolumeRecord.swift Tests/Core/EjectCapabilityTests.swift -o "$OUT/弹出能力验证"
 "${RUN[@]}" "$OUT/弹出能力验证"
@@ -29,10 +29,13 @@ xcrun swiftc "${SWIFT_ARGS[@]}" "${HELPER_ARGS[@]}" Tests/Core/PrivilegedHelperH
 "${RUN[@]}" "$OUT/句柄传输回归"
 
 # 同一真实助手模块覆盖发现、正常卸载、兼容收尾与安全策略。
-for test in ManagedMountDiscovery ManagedUnmount LegacyMountProcess PrivilegedHelperPolicy PrivilegedHelperACL PrivilegedHelperSession; do
+for test in ManagedMountDiscovery ManagedUnmount LegacyMountEnvironment LegacyMountProcess PrivilegedHelperPolicy PrivilegedHelperACL PrivilegedHelperSession FSKitMountBridge NativeReadOnlyMount FSKitWriteProbe; do
   xcrun swiftc "${SWIFT_ARGS[@]}" "${HELPER_ARGS[@]}" "Tests/Core/${test}Tests.swift" -o "$OUT/$test"
   "${RUN[@]}" "$OUT/$test"
 done
+xcrun clang -arch "$TEST_ARCH" -mmacosx-version-min=13.0 -Wall -Wextra -Werror \
+  Tests/Core/FSKitMountBridgeChecks.c -o "$OUT/FSKitMountBridgeChecks"
+"${RUN[@]}" "$OUT/FSKitMountBridgeChecks"
 xcrun swiftc "${SWIFT_ARGS[@]}" Sources/Core/VolumeRecord.swift Tests/Core/MountStateTests.swift -o "$OUT/挂载状态验证"
 "${RUN[@]}" "$OUT/挂载状态验证"
 xcrun swiftc "${SWIFT_ARGS[@]}" -import-objc-header Configuration/App-Bridging-Header.h \

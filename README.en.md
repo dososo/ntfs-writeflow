@@ -1,13 +1,27 @@
 # NTFS 畅写 · NTFS WriteFlow
 
-[完整介绍与截图](README.md) · [下载 0.3.0 兼容预览版](https://github.com/dososo/ntfs-writeflow/releases/tag/v0.3.0) · [版本说明](发布/版本说明.md)
+[完整介绍与截图](README.md) · [下载0.3.1兼容预览](https://github.com/dososo/ntfs-writeflow/releases/tag/v0.3.1) · [版本说明](发布/版本说明.md)
 
-免费开源的 macOS NTFS 应用，提供只读／读写挂载、Finder 访问、正常卸载、整盘推出、逐盘策略和登录后台管理。当前界面与维护文档为简体中文。
+**0.3.1（构建11）兼容预览。** [源码66cf56b](https://github.com/dososo/ntfs-writeflow/commit/66cf56b6200a34b81649d7f36a426eb17a4cc69f)。 免费开源的macOS NTFS桌面应用，用中文界面呈现磁盘状态、只读／读写、Finder访问、正常卸载、整盘推出与后台管理。
 
-0.3.0（6）根据用户反馈交付 Intel 与 Apple Silicon 通用包，主应用最低 macOS 13。macOS 15.4 及以上使用随包 FSKit 扩展；macOS 13～15.3 使用随包 NTFS-3G 兼容前端与用户自行安装批准的官方 macFUSE。Apple Silicon 上的旧系统可能需要本人按 macFUSE 官方流程调整启动安全并批准内核扩展，本应用不会自动更改设置。
+Intel／Apple Silicon通用包、最低macOS13和macFUSE兼容前端来自0.3.0。0.3.1按模式选择后端：15.4～26.3只读使用系统原生NTFS、读写FSKit；26.4起两种模式均FSKit；13～15.3使用用户自行安装批准的官方macFUSE。FSKit及macFUSE使用随包NTFS-3G，系统原生只读不经过该引擎。15.4～26.3所有挂载请求经管理员服务；26及以上保留`funmount`卸载。
 
-本轮已运行 ARM／Rosetta 真实文件镜像回调、故障注入、官方库 ABI 和参数解析及双架构构建；没有将其算作 Intel 硬件或 macOS 13～15.3／15.4 目标系统完整验收。保持预发布定位，自动管理默认关闭。完整支持路径、安装／回退和未覆盖项目见[兼容预览发行说明](发布/0.3.0兼容预览发行说明.md)与[可核验说明](发布/0.3.0可核验说明.md)。
+本轮五项变化：
 
-[DMG 通用安装包](https://github.com/dososo/ntfs-writeflow/releases/download/v0.3.0/NTFS-WriteFlow-0.3.0-universal.dmg) · [ZIP 通用应用](https://github.com/dososo/ntfs-writeflow/releases/download/v0.3.0/NTFS-WriteFlow-0.3.0-universal.zip)。同一 Release 提供完整对应源码、校验清单和验证附件。
+- **旧FSKit写入兼容**：修正旧系统模块发现、用户身份与资源同步访问；15.4～26.3只读使用系统原生NTFS，读写使用FSKit。 枚举漏列时，15.4起可人工交由系统继续核验；明确关闭、错误和自动门槛不放宽。
+- **拒绝写入后保持可读**：原只读仍存活时，能力／预检／身份检查失败保留只读；原RO关闭或RW开始后的真实故障不在此保证内。
+- **状态对应当前挂载**：内部准备成功才显示可写；刷新、重启或同盘重挂不沿用旧证明，被动查询不启动写入。
+- **正常卸载收尾**：区分系统根缓存与真实文件占用，补旧系统漏回调收尾；遇忙项或错误保留状态，不强制关闭。
+- **源码构建与验收可复跑**：修复兼容源码首次归档中断，补齐探针构建命令，区分模拟与实际回放，物理身份未知时继续拒绝。
 
-[从源码构建与签名](发布/开源说明.md) · [安装与卸载](发布/安装与卸载.md) · [许可](LICENSE) · [第三方组件](第三方组件说明.md)
+设置／诊断的滚动、长错误及导出可达已并入本版；Apple虚拟机13～15.3的macFUSE内核路径明确拒绝，特殊项和未知事务保护继续保留。13.7.4／14.0只有安装、界面和限制提示等分项，兼容VFS未通过。
+
+历史构建10已通过15.4受控镜像完整链与内部收尾。当前构建11的App／DMG公证及制品检查已过，同包15.4、现代实体盘、最终源码／离线／回下载以同版本Release核验附件为准，不声明已通过。13.7.4／14.0兼容VFS未过，26.0～26.3仅策略／模拟，Intel实体机未验。历史记录见[可核验说明](发布/0.3.1可核验说明.md)。
+
+旧FSKit的`nosuid`／`nodev`／`nobrowse`未全部保留；拒绝特殊项、不呈现setuid／setgid不证明内核安全标志生效。详情与失败历史见[发行说明](发布/0.3.1兼容预览发行说明.md)和[可核验说明](发布/0.3.1可核验说明.md)。Issue #3仍待原环境复测。
+
+现代实体盘本轮逐项结果以同版本Release核验附件为准；本源码说明不声明该项已通过。26.4仅完成镜像准备，未启动、未通过；只读DA／IOMedia元数据不等于本产品文件操作验收。
+
+[0.3.1 DMG](https://github.com/dososo/ntfs-writeflow/releases/download/v0.3.1/NTFS-WriteFlow-0.3.1-universal.dmg) · [0.3.1 ZIP](https://github.com/dososo/ntfs-writeflow/releases/download/v0.3.1/NTFS-WriteFlow-0.3.1-universal.zip)。对应源码、校验清单及逐项验证记录随同版本Release提供。
+
+[源码与签名](发布/开源说明.md) · [安装与卸载](发布/安装与卸载.md) · [许可](LICENSE) · [第三方组件](第三方组件说明.md)

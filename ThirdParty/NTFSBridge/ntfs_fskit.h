@@ -77,6 +77,8 @@ int  nfsk_probe(void *resource, char *name_out, size_t name_cap, uint64_t *seria
 /* Always consumes v, including on error. Returns zero or negative errno. */
 int nfsk_umount(ntfs_fskit_volume *v);
 int  nfsk_sync(ntfs_fskit_volume *v);
+/* 只查询写权限与已锁存的写回错误；不执行I/O、同步或清除错误。 */
+int  nfsk_write_status(ntfs_fskit_volume *v);
 int  nfsk_statfs(ntfs_fskit_volume *v, nfsk_statfs_t *out);
 
 /* Read-only mount preflight, not a full consistency scan or repair. The resource
@@ -131,6 +133,10 @@ int      nfsk_seek_region(ntfs_fskit_volume *v, uint64_t ino, int64_t offset,
 /* FSKit open/close describe access modes, not descriptor counts. Opening is
  * idempotent; call close only when no access modes remain. */
 int      nfsk_open_item(ntfs_fskit_volume *v, uint64_t ino);
+/* 只读查询真实打开登记；调用方与其他桥接操作一样持卷锁。无打开为0，有为1，错误为负errno。 */
+int      nfsk_has_open_items(ntfs_fskit_volume *v);
+/* 只读查询非根打开登记；根项可被FSKit缓存至停用，其他语义同上。 */
+int      nfsk_has_open_nonroot_items(ntfs_fskit_volume *v);
 int      nfsk_close_item(ntfs_fskit_volume *v, uint64_t ino);
 int      nfsk_rename(ntfs_fskit_volume *v, uint64_t src_dir, const char *src_name,
                      uint64_t dst_dir, const char *dst_name);

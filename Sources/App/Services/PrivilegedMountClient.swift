@@ -34,11 +34,11 @@ enum PrivilegedMountClient {
     }
 
     static func mountedVolumes() async throws -> [PrivilegedMountResult] {
-        let data = try await call { service, finish in service.mountedVolumes(withReply: finish) }
+        let data = try await call(timeout: 2) { service, finish in service.mountedVolumes(withReply: finish) }
         return try JSONDecoder().decode([PrivilegedMountResult].self, from: data)
     }
 
-    private static func call(_ send: (PrivilegedMountProtocol, @escaping @Sendable (Data?, String?) -> Void) -> Void) async throws -> Data {
+    private static func call(timeout: TimeInterval = 90, _ send: (PrivilegedMountProtocol, @escaping @Sendable (Data?, String?) -> Void) -> Void) async throws -> Data {
         try requireEnabled()
         return try await withCheckedThrowingContinuation { continuation in
             let connection = NSXPCConnection(machServiceName: PrivilegedMountConfiguration.machServiceName, options: .privileged)
@@ -57,7 +57,7 @@ enum PrivilegedMountClient {
                 reply.finish(nil, "无法建立挂载服务连接。")
                 return
             }
-            DispatchQueue.global().asyncAfter(deadline: .now() + 90) {
+            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
                 reply.finish(nil, "挂载服务等待超时。操作可能已提交，请刷新确认状态后再试。")
             }
             send(service) { data, error in reply.finish(data, error) }

@@ -23,7 +23,7 @@ actor DiskService {
         }
     }
 
-    func snapshot() throws -> DiskSnapshot {
+    func snapshot() async throws -> DiskSnapshot {
         let data = try run(["list", "-plist"])
         let list = try dictionary(data)
         guard let identifiers = list["AllDisks"] as? [String] else {
@@ -33,16 +33,75 @@ actor DiskService {
         var unreadable = 0
         for identifier in identifiers where VolumeRecord.validDeviceID(identifier) {
             do {
-                if let volume = try record(identifier) { records.append(volume) }
+                if let volume = try rawRecord(identifier) { records.append(volume) }
                 else { unreadable += 1 }
             } catch { unreadable += 1 }
         }
+        let refreshed = await Self.recheckingWriteReadiness(records, userID: geteuid(),
+            query: PrivilegedMountClient.mountedVolumes, reload: { try await self.rawRecord($0) })
+        records = refreshed.records
+        unreadable += refreshed.unreadableCount
         let currentIDs = Set(records.compactMap(\.mediaRegistryID))
         bindings = bindings.filter { currentIDs.contains($0.key) }
         return DiskSnapshot(records: records, unreadableCount: unreadable)
     }
 
-    func record(_ identifier: String) throws -> VolumeRecord? {
+    func record(_ identifier: String) async throws -> VolumeRecord? {
+        guard let volume = try rawRecord(identifier) else { return nil }
+        guard volume.needsWriteReadiness else { return volume }
+        let refreshed = await Self.recheckingWriteReadiness([volume], userID: geteuid(),
+            query: PrivilegedMountClient.mountedVolumes, reload: { try await self.rawRecord($0) })
+        if let previous = volume.mediaRegistryID, previous != refreshed.records.first?.mediaRegistryID {
+            bindings.removeValue(forKey: previous)
+        }
+        return refreshed.records.first
+    }
+
+    // snapshot与record共用；异步等待后的实例必须重新读取。
+    nonisolated static func recheckingWriteReadiness(_ records: [VolumeRecord], userID: UInt32,
+        query: @Sendable () async throws -> [PrivilegedMountResult],
+        reload: @Sendable (String) async throws -> VolumeRecord?) async -> DiskSnapshot {
+        guard records.contains(where: \.needsWriteReadiness) else { return DiskSnapshot(records: records, unreadableCount: 0) }
+        let readiness = (try? await query()) ?? []
+        var current: [VolumeRecord] = []
+        var unreadable = 0
+        for previous in records {
+            guard previous.needsWriteReadiness else { current.append(previous); continue }
+            do {
+                guard let fresh = try await reload(previous.id), fresh.id == previous.id else {
+                    unreadable += 1
+                    continue
+                }
+                let proof = previous.matchesMediaIdentity(of: fresh) ? readiness : []
+                current.append(Self.applyingWriteReadiness(proof, to: fresh, userID: userID))
+            } catch { unreadable += 1 }
+        }
+        return DiskSnapshot(records: current, unreadableCount: unreadable)
+    }
+
+    // 每次只使用本次被动查询的证明；不缓存上一挂载、刷新或进程的true。
+    nonisolated static func applyingWriteReadiness(_ results: [PrivilegedMountResult], to volume: VolumeRecord,
+                                                  userID: UInt32) -> VolumeRecord {
+        var observed = volume
+        observed.writeReady = nil
+        guard volume.needsWriteReadiness, volume.isMountedByWriteFlow, let mounted = volume.mountedFileSystem,
+              let mediaID = volume.mediaRegistryID, mediaID > 0,
+              let wholeID = volume.wholeMediaRegistryID, wholeID > 0,
+              let token = PrivilegedMountConfiguration.token(mountPoint: mounted.mountPoint, userID: userID),
+              !mounted.identity.isEmpty, mounted.source == "/dev/\(volume.id)" else { return observed }
+        let related = results.filter { $0.deviceID == volume.id || $0.fileSystemIdentity == mounted.identity || $0.mountPoint == mounted.mountPoint }
+        guard related.count == 1 else { return observed }
+        let matching = related.filter {
+            $0.backend == .fsKit && !$0.readOnly && $0.token == token && $0.deviceID == volume.id
+                && $0.mediaRegistryID == mediaID && $0.wholeMediaRegistryID == wholeID
+                && $0.mountPoint == mounted.mountPoint && $0.fileSystemIdentity == mounted.identity
+        }
+        guard matching.count == 1 else { return observed }
+        observed.writeReady = matching[0].writeReady
+        return observed
+    }
+
+    private func rawRecord(_ identifier: String) throws -> VolumeRecord? {
         guard VolumeRecord.validDeviceID(identifier) else {
             throw DiskOperationError(message: "设备标识无效。")
         }
@@ -72,7 +131,7 @@ actor DiskService {
         }
         guard let mediaID = expected.mediaRegistryID, let wholeMediaID = expected.wholeMediaRegistryID,
               let binding = bindings[mediaID],
-              let current = try record(expected.id), expected.matchesMediaIdentity(of: current),
+              let current = try await record(expected.id), expected.matchesMediaIdentity(of: current),
               expected.volumeUUID == current.volumeUUID, current.canOfferMount else {
             throw DiskOperationError(message: "卷身份已变化、已被挂载或不符合外部 NTFS 卷条件，请刷新后重试。")
         }
@@ -93,8 +152,14 @@ actor DiskService {
             } else {
                 result = try await PrivilegedMountClient.mount(request)
             }
-            guard let mounted = try record(expected.id), expected.matchesMediaIdentity(of: mounted),
+            let backend = PrivilegedMountBackend.select(readOnly: readOnly)
+            guard !FSKitWriteReadiness.requires(backend: backend, readOnly: readOnly) || result.writeReady == true else {
+                throw DiskOperationError(message: "系统已挂载，但扩展内部写入未就绪；请刷新核验或正常卸载。")
+            }
+            guard let mounted = try rawRecord(expected.id).map({ Self.applyingWriteReadiness([result], to: $0, userID: geteuid()) }), expected.matchesMediaIdentity(of: mounted),
                   mounted.mountPoint == result.mountPoint, mounted.isMountedByWriteFlow,
+                  mounted.mountedFileSystem?.type == backend.fileSystemType,
+                  result.backend == backend || (result.backend == nil && backend != .nativeReadOnly),
                   mounted.mountedFileSystem?.ownerID == 0,
                   mounted.mountedFileSystem?.identity == result.fileSystemIdentity,
                   PrivilegedMountConfiguration.token(mountPoint: result.mountPoint, userID: geteuid()) == result.token,
@@ -109,7 +174,7 @@ actor DiskService {
         do {
             let options = "\(readOnly ? "ro" : "rw"),nosuid,nodev,nobrowse,writeflow-media-id=\(mediaID)"
             _ = try run(["-F", "-t", "blntfs", "-o", options, "/dev/\(expected.id)", path], executable: "/sbin/mount")
-            guard let mounted = try record(expected.id), expected.matchesMediaIdentity(of: mounted),
+            guard let mounted = try await record(expected.id), expected.matchesMediaIdentity(of: mounted),
                   mounted.mountPoint == path, mounted.isMountedByWriteFlow,
                   mounted.mountedFileSystem?.ownerID == geteuid(),
                   mounted.access == (readOnly ? .readOnly : .readWrite) else {
@@ -125,7 +190,7 @@ actor DiskService {
     func unmount(_ expected: VolumeRecord) async throws {
         guard expected.canOfferUnmount, let before = expected.mountedFileSystem,
               let path = expected.mountPoint,
-              let current = try record(expected.id), expected.matchesMediaIdentity(of: current),
+              let current = try await record(expected.id), expected.matchesMediaIdentity(of: current),
               current.mountedFileSystem == before else {
             throw DiskOperationError(message: "只允许卸载当前用户以 NTFS 畅写挂载且身份未变化的卷。")
         }
@@ -205,7 +270,7 @@ actor DiskService {
         guard AppCapabilities.directEjectEnabled, expected.canOfferEject else {
             throw DiskOperationError(message: "此卷不满足外部介质的安全弹出条件。")
         }
-        let fresh = try snapshot()
+        let fresh = try await snapshot()
         guard fresh.unreadableCount == 0 else {
             throw DiskOperationError(message: "部分磁盘状态无法读取，暂不执行弹出。请刷新后再试。")
         }
@@ -228,7 +293,7 @@ actor DiskService {
                 unmounted = true
             }
             try Task.checkCancellation()
-            let ready = try snapshot()
+            let ready = try await snapshot()
             guard ready.unreadableCount == 0 else {
                 throw DiskOperationError(message: "无法完整核对同盘分卷，已停止弹出。")
             }
@@ -257,7 +322,7 @@ actor DiskService {
             for handle in handles { try? handle.close() }
             handles.removeAll()
             try Task.checkCancellation()
-            guard let prepared = try record(expected.id), expected.matchesMediaIdentity(of: prepared) else {
+            guard let prepared = try await record(expected.id), expected.matchesMediaIdentity(of: prepared) else {
                 throw DiskOperationError(message: "原介质已变化，已停止弹出。")
             }
             // 在前台用户会话请求精确设备的只读授权，避免后台守护进程申请整个磁盘访问权。

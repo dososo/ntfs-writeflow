@@ -15,7 +15,7 @@ enum ManagedUnmount {
               VolumeRecord.validDeviceID(ticket.request.deviceID), ticket.request.mediaRegistryID > 0,
               ticket.request.wholeMediaRegistryID > 0, ticket.request.mediaByteCount > 0,
               PrivilegedMountConfiguration.token(mountPoint: expected.mountPoint, userID: ticket.userID) == ticket.token,
-              ["blntfs", "macfuse"].contains(expected.type), expected.ownerID == 0,
+              ticket.matchesBackend(expected), expected.ownerID == 0,
               expected.source == "/dev/\(ticket.request.deviceID)",
               !expected.identity.isEmpty, ticket.fileSystemIdentity == expected.identity else {
             throw HelperFailure(message: "旧系统仅允许卸载当前凭据对应的系统专用挂载。")

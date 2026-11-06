@@ -272,6 +272,25 @@ import Darwin
         precondition(chmod(libraryPath, 0o600) == 0)
         try HelperNamespace.removeRuntime(parent: readable, inspect: simulatedRootStatus)
 
+        let helperPath = runtimePath + "/NTFSWriteFlowMountHelper"
+        precondition(mkdir(runtimePath, 0o700) == 0)
+        createFile(helperPath); createFile(libraryPath); createFile(executablePath)
+        precondition(chmod(helperPath, 0o400) == 0)
+        rejected("新助手副本异常时，三个固定缓存均须保留") {
+            try HelperNamespace.removeRuntime(parent: readable, inspect: simulatedRootStatus)
+        }
+        check(access(helperPath, F_OK) == 0 && access(libraryPath, F_OK) == 0 && access(executablePath, F_OK) == 0,
+              "完整核验助手、库和旧前端后才允许任何删除")
+        precondition(chmod(helperPath, 0o500) == 0)
+        do { try HelperNamespace.removeRuntime(parent: readable, inspect: simulatedRootStatus) }
+        catch {
+            precondition(unlink(libraryPath) == 0 && unlink(executablePath) == 0)
+            precondition(unlink(helperPath) == 0 && rmdir(runtimePath) == 0)
+            throw error
+        }
+        check(access(runtimePath, F_OK) != 0 && access(ticketPath, F_OK) == 0,
+              "模拟root元数据下清理固定助手副本，不删除票据")
+
         var calls: [String] = []
         var currentFD: MountedFileSystem? = expected
         var currentPath: MountedFileSystem? = expected

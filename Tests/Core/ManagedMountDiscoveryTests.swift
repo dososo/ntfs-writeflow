@@ -17,6 +17,17 @@ import Foundation
                 identity: "42:7", ownerID: owner, isReadOnly: false)
         }
         let legacy = mount()
+        let nativeReadOnly = MountedFileSystem(type: "ntfs", source: "/dev/disk99s1", mountPoint: path,
+            identity: "42:7", ownerID: 0, isReadOnly: true)
+        check(nativeReadOnly.isWriteFlow)
+        check(try MountedFileSystemReader.managedMount(in: [nativeReadOnly], deviceID: "disk99s1", userID: 501) == nativeReadOnly)
+        check(!mount("ntfs").isWriteFlow)
+        for invalid in [MountedFileSystem(type: "ntfs", source: "/dev/disk99s1", mountPoint: "/Volumes/其他卷",
+                        identity: "42:7", ownerID: 0, isReadOnly: true),
+                        MountedFileSystem(type: "ntfs", source: "/dev/disk99s1", mountPoint: path,
+                        identity: "42:7", ownerID: 501, isReadOnly: true)] {
+            check(!invalid.isWriteFlow)
+        }
         check(try MountedFileSystemReader.managedMount(in: [legacy], deviceID: "disk99s1", userID: 501) == legacy)
         check(try MountedFileSystemReader.managedMount(in: [mount("blntfs")], deviceID: "disk99s1", userID: 501) != nil)
         for invalid in [mount("macfuse_OTHER"), mount(source: "/dev/disk99s2"), mount(at: "/Volumes/其他卷"),

@@ -205,3 +205,11 @@ bash Tests/Core/run_automount_tests.sh
 统一脚本实际编译并运行逐盘策略／协调、环境完整性、原生事件门禁、登录启动判定和AppModel集成，使用Swift 6及warnings-as-errors。模型采用隔离默认值域和可控依赖，不对真实卷执行操作；原生生命周期测试仅观察系统元数据。它不注册登录项，不调用管理员挂载服务。
 
 真实系统镜像另见[自动挂载机制说明](../System/自动挂载机制说明.md)，原生通知顺序及无规则观察见[候选事件链审查](../../发布/0.2.0自动挂载独立审查.md)。这些测试必须保留各自注入边界；不能用策略通过代替二十轮实体接入、登录／锁屏或无竞争环境。
+
+## 旧后端的 Apple 虚拟机限制候选
+
+`LegacyMountEnvironmentTests.swift` 已接入 `run_eject_tests.sh`，可用 `NTFS_TEST_ARCH=arm64` 或 `x86_64` 分别运行。25项检查覆盖：只有 macFUSE 后端、虚拟化标记明确为1且型号完整属于 VirtualMac 数字族时提示平台不可用；FSKit、实体Mac、Intel VMware、其他或未知型号以及未知标记不被此规则禁用。
+
+共享判断位于 `Sources/HelperShared/LegacyMountEnvironment.swift`。前台 `ExtensionDiagnostic.load` 在检查运行时安装前返回不可用原因，`AppModel.mount` 原有旧后端分支转达该原因；助手 `mountLegacy` 在创建命名空间、票据和兼容子进程之前使用同一判断早拒。系统信息通过只读 `sysctlbyname` 查询，不改变批准或安全策略。限制依据见 [macFUSE 官方说明](https://github.com/macfuse/macfuse/wiki/Getting-Started)。
+
+这些检查证明分类规则与两架构编译／执行，不证明真实旧系统或guest取值、GUI提示和内核拒绝已复现。候选须在原始发行包红测后部署；不得以此替代guest验收。最小代码回滚为撤回共享探测、前台／助手两处调用及对应测试入口，不需要清理任何介质或系统设置。

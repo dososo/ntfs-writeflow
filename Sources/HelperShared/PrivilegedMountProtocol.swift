@@ -27,6 +27,21 @@ struct PrivilegedMountRequest: Codable, Sendable {
     let readOnly: Bool
 }
 
+// 后端仅由可信服务按系统版本和访问模式选择，XPC请求不能指定。
+enum PrivilegedMountBackend: String, Codable, Sendable {
+    case fsKit, macFUSE, nativeReadOnly
+
+    static func select(readOnly: Bool, on version: OperatingSystemVersion = ProcessInfo.processInfo.operatingSystemVersion) -> Self {
+        if version.majorVersion < 15 || (version.majorVersion == 15 && version.minorVersion < 4) { return .macFUSE }
+        let needsNativeReadOnly = version.majorVersion < 26 || (version.majorVersion == 26 && version.minorVersion < 4)
+        return readOnly && needsNativeReadOnly ? .nativeReadOnly : .fsKit
+    }
+
+    var fileSystemType: String {
+        switch self { case .fsKit: "blntfs"; case .macFUSE: "macfuse"; case .nativeReadOnly: "ntfs" }
+    }
+}
+
 struct PrivilegedMountResult: Codable, Sendable {
     let token: String
     let mountPoint: String
@@ -35,6 +50,8 @@ struct PrivilegedMountResult: Codable, Sendable {
     let wholeMediaRegistryID: UInt64
     let fileSystemIdentity: String
     let readOnly: Bool
+    var backend: PrivilegedMountBackend?
+    var writeReady: Bool? = nil
 }
 
 struct PrivilegedEjectRequest: Codable, Sendable {

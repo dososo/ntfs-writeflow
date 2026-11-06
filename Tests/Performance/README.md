@@ -10,12 +10,35 @@
 
 ```sh
 mkdir -p build/performance
-xcrun swiftc -target arm64-apple-macos26.0 -swift-version 6 \
+PROBE_ARCH="${NTFS_TEST_ARCH:-arm64}"
+case "$PROBE_ARCH" in arm64|x86_64) ;; *) echo '架构仅支持arm64或x86_64。' >&2; exit 2;; esac
+xcrun swiftc -parse-as-library -target "$PROBE_ARCH-apple-macos13.0" -swift-version 6 -warnings-as-errors \
+  -Xlinker -weak_framework -Xlinker FSKit \
   -import-objc-header Tests/Performance/Benchmark-Bridging-Header.h \
-  Sources/HelperShared/PrivilegedMountProtocol.swift Sources/PrivilegedHelper/HelperNamespace.swift \
-  Sources/Core/VolumeRecord.swift Sources/App/Services/MountedFileSystemReader.swift \
-  Tests/Performance/IsolationProbe.swift Tests/Performance/TargetProbe.swift -framework IOKit -o build/performance/target-probe
+  Sources/Core/VolumeRecord.swift Sources/HelperShared/*.swift \
+  Sources/App/Services/MountedFileSystemReader.swift \
+  Sources/PrivilegedHelper/HelperMedia.swift Sources/PrivilegedHelper/HelperNamespace.swift \
+  Sources/PrivilegedHelper/HelperEject.swift Sources/PrivilegedHelper/ManagedUnmount.swift \
+  Sources/PrivilegedHelper/FSKitWriteProbe.swift Sources/PrivilegedHelper/LegacyMountProcess.swift \
+  Sources/PrivilegedHelper/PrivilegedMountService.swift \
+  Tests/Performance/IsolationProbe.swift Tests/Performance/PhysicalMediaEvidence.swift \
+  Tests/Performance/TargetProbe.swift -framework IOKit -framework DiskArbitration -o build/performance/target-probe
 ```
+
+上述完整依赖复用生产身份／ACL规则，不启动管理员服务。默认ARM；设置`NTFS_TEST_ARCH=x86_64`可编译Intel目标，Rosetta执行不等于Intel实体机验收。物理判定从持有DA／whole IOMedia父链协议互证，不依赖diskutil可能缺省的VirtualOrPhysical；缺失／冲突输出unknown/null，原physical gate继续拒绝。实体识别不表示已由blntfs挂载。
+
+不接触设备的独立判定回归：
+
+```sh
+PROBE_ARCH="${NTFS_TEST_ARCH:-arm64}"
+mkdir -p build/performance
+xcrun swiftc -parse-as-library -target "$PROBE_ARCH-apple-macos13.0" -swift-version 6 -warnings-as-errors \
+  Tests/Performance/PhysicalMediaEvidence.swift Tests/Performance/PhysicalMediaEvidenceTests.swift \
+  -o build/performance/media-kind-tests
+build/performance/media-kind-tests
+```
+
+无参数默认只使用Internal／BusProtocol／SystemImage三个字段的明确模拟fixture，不称为实测。可额外传入一个实际保存的diskutil plist，或再传入独立实际探针JSON回放；输出会区分模拟、实际plist＋构造协议、实际plist＋实际协议回放。所有模式只读普通快照，不运行设备探针；真实probe本身的元数据读取另记。
 
 fio在独立build目录以固定提交configure/make，运行时显式指定二进制及本机清单；清单JSON含 `commit` 与 `binary_sha256`，逐次核对实际二进制。此清单、本机路径和测试数据不提交仓库。
 

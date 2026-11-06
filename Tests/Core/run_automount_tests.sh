@@ -26,6 +26,11 @@ SWIFT=(xcrun swiftc -target "$TEST_ARCH-apple-macos13.0" -swift-version 6 -warni
 "${SWIFT[@]}" Sources/App/Services/LoginLaunchService.swift Tests/Core/LoginLaunchTests.swift \
   -o "$OUT/登录启动验证"
 "${RUN[@]}" "$OUT/登录启动验证"
+"${SWIFT[@]}" Sources/Core/VolumeRecord.swift Sources/HelperShared/PrivilegedMountProtocol.swift \
+  Sources/HelperShared/LegacyMountEnvironment.swift Sources/HelperShared/LegacyRuntime.swift \
+  Sources/App/Services/ExtensionDiagnostic.swift Tests/Core/ExtensionDiagnosticTests.swift \
+  -o "$OUT/扩展诊断手动边界验证"
+"${RUN[@]}" "$OUT/扩展诊断手动边界验证"
 "${SWIFT[@]}" -import-objc-header Configuration/App-Bridging-Header.h \
   Sources/Core/*.swift Sources/HelperShared/*.swift Sources/App/Services/*.swift \
   Sources/App/AppModel*.swift Tests/Core/AppModelAutoMountTests.swift \

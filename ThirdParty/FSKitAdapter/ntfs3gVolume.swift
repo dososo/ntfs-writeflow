@@ -22,7 +22,7 @@ struct NTFSBackend {
 }
 
 @available(macOS 15.4, *)
-final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperations,
+class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperations,
                           FSVolume.ReadWriteOperations, FSVolume.OpenCloseOperations,
                           FSVolume.XattrOperations, FSVolume.RenameOperations,
                           FSVolume.PreallocateOperations {
@@ -36,6 +36,21 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
     private var activated = false
     private var mounted = false
     private var activationOptions: [String] = []
+    private var pendingActivationWrite = false
+    private var activationOpenItems: Set<UInt64> = []
+    private var legacyActivationPolicy: (([String]) throws -> Bool)?
+    private let legacyActivationOptions: [String]
+    private var validateWriteCapability: (([String]) throws -> Void)?
+    private var writeCapabilityFailure: Error?
+    private var deactivationFailure: Error?
+    private struct WritePreparation {
+        let token: String
+        let mediaID: UInt64
+        var prepared = false
+    }
+    private var writePreparation: WritePreparation?
+    private static let preparePrefix = "com.blteam.ntfsworkbench.write-prepare."
+    private static let readyPrefix = "com.blteam.ntfsworkbench.write-ready."
     private let lock = NSLock()
     private var items: [UInt64: ntfs3gItem] = [:]
     private let rootItem: ntfs3gItem
@@ -48,10 +63,13 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
 
     /// `backend` comes from `nfsk_backend_from_block` / `nfsk_backend_from_file`.
     /// Ownership of `backend` transfers to this volume (freed in `teardown`).
-    init(backend: NTFSBackend,
+    required init(backend: NTFSBackend,
          mountBackend: @escaping ([String], Bool, UnsafeMutableRawPointer) throws -> NTFSBackend?,
          onContainerStatusChange: @escaping (FSContainerStatus) -> Void,
-         legacyOpenUnlink: Bool = ntfs3gVolume.needsLegacyOpenUnlink) throws {
+         legacyOpenUnlink: Bool = ntfs3gVolume.needsLegacyOpenUnlink,
+         legacyActivationPolicy: (([String]) throws -> Bool)? = nil,
+         legacyActivationOptions: [String] = [],
+         validateWriteCapability: (([String]) throws -> Void)? = nil) throws {
         var err: Int32 = 0
         guard let h = nfsk_mount(backend.backend, true, &err) else {
             backend.cleanup()
@@ -82,6 +100,9 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
         self.onContainerStatusChange = onContainerStatusChange
         self.rootItem = root
         self.legacyOpenUnlink = legacyOpenUnlink
+        self.legacyActivationPolicy = legacyActivationPolicy
+        self.legacyActivationOptions = legacyActivationPolicy == nil ? [] : legacyActivationOptions
+        self.validateWriteCapability = validateWriteCapability
 
         let vid = FSVolume.Identifier(uuid: NTFSVolumeSupport.volumeUUID(serial: st.volume_serial, label: volName, sizeBytes: totalBytes))
         super.init(volumeID: vid, volumeName: FSFileName(string: volName))
@@ -99,6 +120,11 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
         activated = false
         mounted = false
         activationOptions = []
+        pendingActivationWrite = false
+        activationOpenItems.removeAll()
+        legacyActivationPolicy = nil
+        validateWriteCapability = nil
+        writePreparation = nil
         if let h = handle { _ = nfsk_umount(h); handle = nil }
         if let b = backend { nfsk_backend_free(b.backend); b.cleanup(); backend = nil }
         mountBackend = nil
@@ -237,13 +263,32 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
         try activate(taskOptions: options.taskOptions)
     }
 
-    // 激活只提供真实可用的只读根项；挂载阶段才处理身份与写入权限。
+    // 激活保持只读；旧系统只记录许可，首次修改才执行完整写前门禁。
     func activate(taskOptions: [String]) throws -> FSItem {
+        NSLog("[blntfs] 激活输入：选项数=\(taskOptions.count) 默认只读=\(ntfs3gFileSystem.defaultsToReadOnly(taskOptions)) 有介质标记=\((try? ntfs3gFileSystem.expectedMediaID(taskOptions)) != nil)")
         try withLock {
             guard !tornDown, handle != nil else { throw posixError(ENXIO) }
+            if let failure = writeCapabilityFailure { throw failure }
             guard !activated, !mounted, readOnly else { throw posixError(EBUSY) }
-            activationOptions = taskOptions
-            activated = true
+            do {
+                // 旧系统可能只在load传选项；许可、nonce、介质绑定与后续准备必须用同一完整上下文。
+                let selectedOptions = legacyActivationOptions + taskOptions
+                pendingActivationWrite = try legacyActivationPolicy?(selectedOptions) ?? false
+                if legacyActivationPolicy != nil {
+                    let token = try ntfs3gFileSystem.writeReadyToken(selectedOptions)
+                    if pendingActivationWrite, let token {
+                        guard let mediaID = try ntfs3gFileSystem.expectedMediaID(selectedOptions) else { throw posixError(ESTALE) }
+                        writePreparation = WritePreparation(token: token, mediaID: mediaID)
+                    }
+                }
+                activationOptions = selectedOptions
+                activated = true
+                NSLog("[blntfs] 激活许可：待写=\(pendingActivationWrite)")
+            } catch {
+                teardownLocked()
+                onContainerStatusChange(.notReady(status: error))
+                throw error
+            }
         }
         onContainerStatusChange(.active)
         return rootItem
@@ -251,86 +296,174 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
 
     func deactivate(options: FSDeactivateOptions = []) async throws {
         let closed = try withLock {
+            if #unavailable(macOS 26.0) {
+                NSLog("[blntfs] 停用输入：强制=\(options.contains(.force)) 旧策略=\(legacyActivationPolicy != nil) 已挂载=\(mounted) 有句柄=\(handle != nil) 原收尾错误=\(deactivationFailure != nil)")
+            }
+            if let failure = deactivationFailure { throw failure }
+            if mounted, legacyActivationPolicy != nil {
+                // 15.4实际正常卸载可能漏掉unmount回调；仅旧路径补同一收尾，不允许force或仍有打开项。
+                guard !options.contains(.force), let h = handle else { throw posixError(EBUSY) }
+                // 根项由FSKit保留到卷停用，不等于仍有用户FD；真实占用先由正常kernel卸载拒绝。
+                let opened = nfsk_has_open_nonroot_items(h)
+                NSLog("[blntfs] 旧系统停用打开登记：全部=\(nfsk_has_open_items(h)) 非根=\(opened)")
+                guard opened == 0 else { throw posixError(opened < 0 ? -opened : EBUSY) }
+                NSLog("[blntfs] 旧系统停用补收尾开始")
+                do {
+                    try unmountLocked()
+                    NSLog("[blntfs] 旧系统停用补收尾成功：同步=0 关闭=0 只读重开=0")
+                } catch {
+                    deactivationFailure = error
+                    teardownLocked()
+                    onContainerStatusChange(.notReady(status: error))
+                    NSLog("[blntfs] 旧系统停用补收尾失败：错误码=\((error as NSError).code)")
+                    throw error
+                }
+            }
             guard !mounted else { throw posixError(EBUSY) }
             activated = false
             activationOptions = []
-            return tornDown
+            pendingActivationWrite = false
+            writePreparation = nil
+            activationOpenItems.removeAll()
+            return tornDown || writeCapabilityFailure != nil
         }
         // 已清理的失败卷保留原 notReady 错误，不改写为通用错误或 ready。
         if !closed { onContainerStatusChange(.ready) }
     }
 
     func mount(options: FSTaskOptions) async throws {
-        try mountVolume()
+        try mountVolume(taskOptions: options.taskOptions)
     }
 
     // 与系统入口共用，离线测试无需伪造系统保留的 FSTaskOptions。
-    func mountVolume() throws {
+    func mountVolume(taskOptions: [String] = []) throws {
         try withLock {
             guard !tornDown, handle != nil, activated else { throw posixError(ENXIO) }
             guard !mounted else { throw posixError(EBUSY) }
-            do {
-                // 先关闭只读引擎；预检与重开在同一资源上串行，不保留并行引擎。
-                guard let previous = backend else { throw posixError(ENXIO) }
-                if let h = handle {
-                    let rc = nfsk_umount(h)
-                    handle = nil
-                    if rc != 0 { throw posixError(-rc) }
+            if let failure = writeCapabilityFailure { throw failure }
+            if let preparation = writePreparation {
+                // 握手前mount只记录选项，不允许系统后台回调抢先开启写入。
+                let combined = activationOptions + taskOptions
+                guard try ntfs3gFileSystem.writeReadyToken(combined) == preparation.token,
+                      try ntfs3gFileSystem.expectedMediaID(combined) == preparation.mediaID else { throw posixError(EINVAL) }
+                activationOptions = combined
+                if ntfs3gFileSystem.defaultsToReadOnly(combined) {
+                    pendingActivationWrite = false
+                    writePreparation = nil
                 }
-                let replacement = try mountBackend?(activationOptions, readOnly, previous.backend)
-                let engineReadOnly = replacement.map { !$0.writable } ?? readOnly
-                if let replacement {
-                    nfsk_backend_free(previous.backend); previous.cleanup()
-                    backend = replacement
-                }
-                guard let selected = backend else { throw posixError(ENXIO) }
-                var err: Int32 = 0
-                guard let h = nfsk_mount(selected.backend, engineReadOnly, &err) else {
-                    throw posixError(err)
-                }
-                handle = h
-                var st = nfsk_statfs_t()
-                let rc = nfsk_statfs(h, &st)
-                guard rc == 0 else { throw posixError(-rc) }
-                readOnly = st.read_only != 0
-                if #unavailable(macOS 26.4), readOnly && backend?.writable == true {
-                    throw posixError(EROFS)
-                }
-                mounted = true
-            } catch {
-                teardownLocked()
+                return
+            }
+            NSLog("[blntfs] 挂载输入：挂载选项数=\(taskOptions.count)")
+            try prepareMountLocked(taskOptions: taskOptions)
+        }
+    }
+
+    // 调用方持锁；正式mount和旧系统首次修改共用预检、身份及引擎所有权转换。
+    private func prepareMountLocked(taskOptions: [String]) throws {
+        pendingActivationWrite = false
+        let combinedOptions = activationOptions + taskOptions
+        if let failure = writeCapabilityFailure { throw failure }
+        if readOnly {
+            do { try validateWriteCapability?(combinedOptions) }
+            catch {
+                // 原引擎尚未关闭且未开启写入；保留RO供读取及正常卸载，不把能力失败变成ENXIO。
+                writeCapabilityFailure = error
                 onContainerStatusChange(.notReady(status: error))
                 throw error
             }
         }
+        NSLog("[blntfs] 引擎准备：激活选项数=\(activationOptions.count) 挂载选项数=\(taskOptions.count) 默认只读=\(ntfs3gFileSystem.defaultsToReadOnly(combinedOptions)) 有介质标记=\((try? ntfs3gFileSystem.expectedMediaID(combinedOptions)) != nil)")
+        let usesLegacyPreparation = legacyActivationPolicy != nil
+        var preparedBackend: NTFSBackend?
+        if usesLegacyPreparation {
+            do {
+                guard let previous = backend else { throw posixError(ENXIO) }
+                // 工厂只创建后端包装器，不开启RW引擎。先完成只读预检和身份复核，拒绝时原RO仍存活。
+                preparedBackend = try mountBackend?(combinedOptions, readOnly, previous.backend)
+            } catch {
+                writeCapabilityFailure = error
+                onContainerStatusChange(.notReady(status: error))
+                throw error
+            }
+        }
+        defer {
+            // 原RO关闭失败时，新包装器还未转移，必须精确释放一次。
+            if let preparedBackend {
+                nfsk_backend_free(preparedBackend.backend)
+                preparedBackend.cleanup()
+            }
+        }
+        do {
+            // 新RW引擎只在原RO关闭后开启；现代系统仍按原顺序预检与准备。
+            guard let previous = backend else { throw posixError(ENXIO) }
+            if let h = handle {
+                let rc = nfsk_umount(h)
+                handle = nil
+                if rc != 0 { throw posixError(-rc) }
+            }
+            let replacement: NTFSBackend?
+            if usesLegacyPreparation {
+                replacement = preparedBackend
+                preparedBackend = nil
+            } else {
+                replacement = try mountBackend?(combinedOptions, readOnly, previous.backend)
+            }
+            let engineReadOnly = replacement.map { !$0.writable } ?? readOnly
+            if let replacement {
+                nfsk_backend_free(previous.backend); previous.cleanup()
+                backend = replacement
+            }
+            guard let selected = backend else { throw posixError(ENXIO) }
+            var err: Int32 = 0
+            guard let h = nfsk_mount(selected.backend, engineReadOnly, &err) else {
+                throw posixError(err)
+            }
+            handle = h
+            // 旧系统首次修改前可能已有读打开；引擎重开后恢复其删除保护。
+            for ino in activationOpenItems {
+                let rc = nfsk_open_item(h, ino)
+                if rc != 0 { throw posixError(-rc) }
+            }
+            activationOpenItems.removeAll()
+            var st = nfsk_statfs_t()
+            let rc = nfsk_statfs(h, &st)
+            guard rc == 0 else { throw posixError(-rc) }
+            readOnly = st.read_only != 0
+            if #unavailable(macOS 26.4), readOnly && backend?.writable == true {
+                throw posixError(EROFS)
+            }
+            mounted = true
+            NSLog("[blntfs] 挂载完成：内部只读=\(readOnly) 后端可写=\(backend?.writable ?? false)")
+        } catch {
+            NSLog("[blntfs] 挂载失败：错误码=\((error as NSError).code)")
+            teardownLocked()
+            onContainerStatusChange(.notReady(status: error))
+            throw error
+        }
+    }
+
+    // 必须在读取handle前调用，升级会消费原只读句柄，不能继续使用旧指针。
+    private func writableHandleLocked() throws -> OpaquePointer {
+        guard !tornDown, activated, handle != nil else { throw posixError(ENXIO) }
+        if let failure = writeCapabilityFailure { throw failure }
+        if let preparation = writePreparation, !preparation.prepared { throw posixError(EROFS) }
+        if pendingActivationWrite {
+            NSLog("[blntfs] 首次修改：执行旧系统写前门禁")
+            try prepareMountLocked(taskOptions: [])
+        }
+        guard !readOnly else { throw posixError(EROFS) }
+        guard let handle else { throw posixError(ENXIO) }
+        return handle
     }
 
     func unmount() async {
         var failure: Error?
         withLock {
-            guard mounted, let h = handle, let backend else { return }
-            let rc = nfsk_sync(h)
-            if rc != 0 {
-                failure = posixError(-rc)
-                teardownLocked()
-                return
-            }
-            // unmount 允许清理 I/O；deactivate 不应再访问介质。
-            // 同一后端重开只读引擎，根项只含 MFT 编号，不持有失效的 C 句柄。
-            let closeResult = nfsk_umount(h)
-            handle = nil
-            if closeResult != 0 {
-                failure = posixError(-closeResult)
-                teardownLocked()
-                return
-            }
-            mounted = false
-            readOnly = true
-            var err: Int32 = 0
-            if let reopened = nfsk_mount(backend.backend, true, &err) {
-                handle = reopened
-            } else {
-                failure = posixError(err)
+            pendingActivationWrite = false
+            do { try unmountLocked() }
+            catch {
+                failure = error
+                if legacyActivationPolicy != nil { deactivationFailure = error }
                 teardownLocked()
             }
         }
@@ -338,6 +471,22 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
             NSLog("[blntfs] 卸载清理失败：\(failure)")
             onContainerStatusChange(.notReady(status: failure))
         }
+    }
+
+    // 调用方持卷锁。消费RW句柄后保留同后端RO引擎，允许同一FSUnary卷实例再次激活。
+    private func unmountLocked() throws {
+        guard mounted else { return }
+        guard let h = handle, let backend else { throw posixError(ENXIO) }
+        let rc = nfsk_sync(h)
+        guard rc == 0 else { throw posixError(-rc) }
+        let closeResult = nfsk_umount(h)
+        handle = nil
+        guard closeResult == 0 else { throw posixError(-closeResult) }
+        mounted = false
+        readOnly = true
+        var error: Int32 = 0
+        guard let reopened = nfsk_mount(backend.backend, true, &error) else { throw posixError(error) }
+        handle = reopened
     }
 
     func synchronize(flags: FSSyncFlags) async throws {
@@ -361,7 +510,9 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
 
     func setAttributes(_ newAttributes: FSItem.SetAttributesRequest, on item: FSItem) async throws -> FSItem.Attributes {
         try withLock {
-            guard let it = item as? ntfs3gItem, let h = handle else { throw posixError(EINVAL) }
+            guard let it = item as? ntfs3gItem else { throw posixError(EINVAL) }
+            _ = try metadataRequest(newAttributes)
+            let h = try writableHandleLocked()
             return try applyAttributes(newAttributes, ino: it.ino, parent: it.parentIno, handle: h)
         }
     }
@@ -452,6 +603,7 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
             if legacyOpenUnlink, items[it.ino] === it, let handle {
                 let rc = nfsk_close_item(handle, it.ino)
                 if rc != 0 { throw posixError(-rc) }
+                activationOpenItems.remove(it.ino)
             }
             let removeCachedItem = {
                 if self.items[it.ino] === it { self.items.removeValue(forKey: it.ino) }
@@ -485,9 +637,10 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
     func createItem(named name: FSFileName, type: FSItem.ItemType, inDirectory directory: FSItem,
                     attributes newAttributes: FSItem.SetAttributesRequest) async throws -> (FSItem, FSFileName) {
         try withLock {
-            guard let dir = directory as? ntfs3gItem, let h = handle, let nameStr = name.string else { throw posixError(EINVAL) }
+            guard let dir = directory as? ntfs3gItem, let nameStr = name.string else { throw posixError(EINVAL) }
             guard type == .file || type == .directory else { throw posixError(ENOTSUP) }
             _ = try metadataRequest(newAttributes)
+            let h = try writableHandleLocked()
             let kind = UInt32(type == .directory ? NFSK_TYPE_DIR : NFSK_TYPE_FILE)
             var err: Int32 = 0
             let ino = nameStr.withCString { nfsk_create(h, dir.ino, $0, kind, &err) }
@@ -508,10 +661,11 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
                             attributes newAttributes: FSItem.SetAttributesRequest,
                             linkContents contents: FSFileName) async throws -> (FSItem, FSFileName) {
         try withLock {
-            guard let dir = directory as? ntfs3gItem, let h = handle,
+            guard let dir = directory as? ntfs3gItem,
                   let nameStr = name.string, let target = contents.string,
                   !nameStr.utf8.contains(0), !target.utf8.contains(0) else { throw posixError(EINVAL) }
             _ = try metadataRequest(newAttributes)
+            let h = try writableHandleLocked()
             var error: Int32 = 0
             let ino = nameStr.withCString { name in
                 target.withCString { nfsk_symlink(h, dir.ino, name, $0, &error) }
@@ -532,7 +686,8 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
     func createLink(to item: FSItem, named name: FSFileName, inDirectory directory: FSItem) async throws -> FSFileName {
         try withLock {
             guard let target = item as? ntfs3gItem, let dir = directory as? ntfs3gItem,
-                  let h = handle, let nameStr = name.string else { throw posixError(EINVAL) }
+                  let nameStr = name.string else { throw posixError(EINVAL) }
+            let h = try writableHandleLocked()
             var err: Int32 = 0
             let rc = nameStr.withCString { nfsk_link(h, target.ino, dir.ino, $0, &err) }
             if rc != 0 { throw posixError(err) }
@@ -542,7 +697,8 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
 
     func removeItem(_ item: FSItem, named name: FSFileName, fromDirectory directory: FSItem) async throws {
         try withLock {
-            guard let dir = directory as? ntfs3gItem, let h = handle, let nameStr = name.string else { throw posixError(EINVAL) }
+            guard let dir = directory as? ntfs3gItem, let nameStr = name.string else { throw posixError(EINVAL) }
+            let h = try writableHandleLocked()
             let rc = nameStr.withCString { nfsk_remove(h, dir.ino, $0) }
             if rc != 0 { throw posixError(-rc) }
             evictDeletedItem(item, handle: h)
@@ -554,7 +710,8 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
                     overItem: FSItem?) async throws -> FSFileName {
         try withLock {
             guard let sdir = sourceDirectory as? ntfs3gItem, let ddir = destinationDirectory as? ntfs3gItem,
-                  let h = handle, let src = sourceName.string, let dst = destinationName.string else { throw posixError(EINVAL) }
+                  let src = sourceName.string, let dst = destinationName.string else { throw posixError(EINVAL) }
+            let h = try writableHandleLocked()
             let rc = src.withCString { sp in dst.withCString { dp in nfsk_rename(h, sdir.ino, sp, ddir.ino, dp) } }
             if rc != 0 { throw posixError(-rc) }
             if let overItem { evictDeletedItem(overItem, handle: h) }
@@ -609,10 +766,41 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
     var maximumXattrSize: Int { Int(NFSK_MAX_XATTR_SIZE) }
 
     // MARK: Extended attributes
+    private static func isPreparationAttribute(_ key: String) -> Bool {
+        key.hasPrefix(preparePrefix) || key.hasPrefix(readyPrefix)
+    }
+
+    // 调用方持原锁；只认本次根对象和激活nonce，不读取磁盘同名属性。
+    private func preparationReceiptLocked(key: String, item: FSItem) throws -> Data {
+        guard item === rootItem else { throw posixError(EPERM) }
+        guard let preparation = writePreparation else { throw posixError(ENOTSUP) }
+        let isPrepare = key == Self.preparePrefix + preparation.token
+        guard isPrepare || key == Self.readyPrefix + preparation.token else { throw posixError(EPERM) }
+        guard !tornDown, activated else { throw posixError(ENXIO) }
+        if let failure = writeCapabilityFailure { throw failure }
+        if isPrepare, !preparation.prepared {
+            guard pendingActivationWrite, readOnly, !mounted else { throw posixError(EROFS) }
+            guard validateWriteCapability != nil else { throw posixError(ENOTSUP) }
+            try prepareMountLocked(taskOptions: [])
+            writePreparation?.prepared = true
+        }
+        guard writePreparation?.prepared == true else { throw posixError(EAGAIN) }
+        // 准备会消费旧句柄，必须重取；查询只读C状态，绝不借sync写盘或清错。
+        guard mounted, !readOnly, backend?.writable == true, let h = handle else { throw posixError(EROFS) }
+        let status = nfsk_write_status(h)
+        guard status == 0 else { throw posixError(-status) }
+        let receipt: [String: Any] = ["schema": 1, "token": preparation.token,
+            "mediaID": preparation.mediaID, "writable": true]
+        let data = try JSONSerialization.data(withJSONObject: receipt, options: [.sortedKeys])
+        guard data.count <= 1024 else { throw posixError(EOVERFLOW) }
+        return data
+    }
+
     func xattr(named name: FSFileName, of item: FSItem) async throws -> Data {
         try withLock {
-            guard let it = item as? ntfs3gItem, let h = handle,
-                  let key = name.string, !key.utf8.contains(0) else { throw posixError(EINVAL) }
+            guard let key = name.string, !key.utf8.contains(0) else { throw posixError(EINVAL) }
+            if Self.isPreparationAttribute(key) { return try preparationReceiptLocked(key: key, item: item) }
+            guard let it = item as? ntfs3gItem, let h = handle else { throw posixError(EINVAL) }
             return try key.withCString { key in
                 let size = nfsk_getxattr(h, it.ino, key, nil, 0)
                 if size < 0 { throw posixError(Int32(-size)) }
@@ -628,8 +816,9 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
     func setXattr(named name: FSFileName, to value: Data?, on item: FSItem,
                   policy: FSVolume.SetXattrPolicy) async throws {
         try withLock {
-            guard let it = item as? ntfs3gItem, let h = handle,
-                  let key = name.string, !key.utf8.contains(0) else { throw posixError(EINVAL) }
+            guard let key = name.string, !key.utf8.contains(0) else { throw posixError(EINVAL) }
+            guard !Self.isPreparationAttribute(key) else { throw posixError(EPERM) }
+            guard let it = item as? ntfs3gItem else { throw posixError(EINVAL) }
             let bridgePolicy: Int32
             switch policy {
             case .alwaysSet: bridgePolicy = Int32(NFSK_XATTR_SET)
@@ -638,6 +827,7 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
             case .delete: bridgePolicy = Int32(NFSK_XATTR_DELETE)
             @unknown default: throw posixError(EINVAL)
             }
+            let h = try writableHandleLocked()
             let rc: Int32 = try key.withCString { key in
                 if policy == .delete { return nfsk_setxattr(h, it.ino, key, nil, 0, bridgePolicy) }
                 guard let value else { throw posixError(EINVAL) }
@@ -657,11 +847,11 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
             let read = bytes.withUnsafeMutableBufferPointer { nfsk_listxattr(h, it.ino, $0.baseAddress, $0.count) }
             if read < 0 { throw posixError(Int32(-read)) }
             guard read == size else { throw posixError(EIO) }
-            return try bytes.split(separator: 0).map { name in
+            return try bytes.split(separator: 0).compactMap { name in
                 guard let string = String(bytes: name.map { UInt8(bitPattern: $0) }, encoding: .utf8) else {
                     throw posixError(EIO)
                 }
-                return FSFileName(string: string)
+                return Self.isPreparationAttribute(string) ? nil : FSFileName(string: string)
             }
         }
     }
@@ -684,9 +874,9 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
 
     func write(contents: Data, to item: FSItem, at offset: off_t) async throws -> Int {
         try withLock {
-            guard let it = item as? ntfs3gItem, let h = handle else { throw posixError(EINVAL) }
-            guard !readOnly else { throw posixError(EROFS) }
+            guard let it = item as? ntfs3gItem else { throw posixError(EINVAL) }
             guard offset >= 0, contents.count <= Int64.max - offset else { throw posixError(EINVAL) }
+            let h = try writableHandleLocked()
             var err: Int32 = 0
             let n = contents.withUnsafeBytes { raw in
                 nfsk_write(h, it.ino, Int64(offset), raw.baseAddress, Int64(raw.count), &err)
@@ -699,7 +889,8 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
     // MARK: Volume name / preallocation
     func setVolumeName(_ name: FSFileName) async throws -> FSFileName {
         try withLock {
-            guard let h = handle, let label = name.string, !label.utf8.contains(0) else { throw posixError(EINVAL) }
+            guard let label = name.string, !label.utf8.contains(0) else { throw posixError(EINVAL) }
+            let h = try writableHandleLocked()
             let rc = label.withCString { nfsk_rename_volume(h, $0) }
             if rc != 0 { throw posixError(-rc) }
             self.name = name
@@ -711,10 +902,10 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
     func preallocateSpace(for item: FSItem, at offset: off_t, length: Int,
                           flags: FSVolume.PreallocateFlags) async throws -> Int {
         try withLock {
-            guard let h = handle, let item = item as? ntfs3gItem else { throw posixError(EINVAL) }
-            guard !readOnly else { throw posixError(EROFS) }
+            guard let item = item as? ntfs3gItem else { throw posixError(EINVAL) }
             let supported: FSVolume.PreallocateFlags = [.all, .persist, .fromEOF]
             guard flags.subtracting(supported).isEmpty else { throw posixError(ENOTSUP) }
+            let h = try writableHandleLocked()
             let rc = nfsk_preallocate(h, item.ino, Int64(offset), Int64(length), flags.contains(.fromEOF))
             if rc < 0 { throw posixError(Int32(-rc)) }
             return Int(rc)
@@ -724,11 +915,15 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
     // MARK: OpenClose
     func openItem(_ item: FSItem, modes: FSVolume.OpenModes) async throws {
         try withLock {
-            guard let h = handle, let it = item as? ntfs3gItem else { throw posixError(EINVAL) }
-            if readOnly && modes.contains(.write) { throw posixError(EROFS) }
+            guard let it = item as? ntfs3gItem, let current = handle else { throw posixError(EINVAL) }
+            let h = try modes.contains(.write) ? writableHandleLocked() : current
+            var attributes = nfsk_attr_t()
+            let status = nfsk_getattr(h, it.ino, &attributes)
+            if status != 0 { throw posixError(-status) }
             guard legacyOpenUnlink else { return }
             let rc = nfsk_open_item(h, it.ino)
             if rc != 0 { throw posixError(-rc) }
+            if pendingActivationWrite { activationOpenItems.insert(it.ino) }
         }
     }
 
@@ -739,8 +934,42 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
             guard items[it.ino] === it else { return }
             let rc = nfsk_close_item(h, it.ino)
             if rc != 0 { throw posixError(-rc) }
+            activationOpenItems.remove(it.ino)
             evictDeletedItem(item, handle: h)
         }
+    }
+}
+
+// 仅旧系统实例声明KOIO协议以申请公开资源同步能力；逐文件设置公开inhibit请求普通IO，实际内核路由须验证。
+// 不提供物理extent，现代基类不继承此子类的协议遵循。
+@available(macOS 15.4, *)
+final class ntfs3gLegacyVolume: ntfs3gVolume, FSVolumeKernelOffloadedIOOperations {
+    override fileprivate func makeAttributes(_ a: nfsk_attr_t, parentIno: UInt64, preferContext: Bool = false) -> FSItem.Attributes {
+        let attrs = super.makeAttributes(a, parentIno: parentIno, preferContext: preferContext)
+        attrs.inhibitKernelOffloadedIO = true
+        return attrs
+    }
+
+    func blockmapFile(_ file: FSItem, offset: off_t, length: Int, flags: FSBlockmapFlags,
+                      operationID: FSOperationID, packer: FSExtentPacker) async throws {
+        NSLog("[blntfs] 旧系统KOIO意外blockmap：已拒绝")
+        throw posixError(ENOTSUP)
+    }
+
+    func completeIO(for file: FSItem, offset: off_t, length: Int, status: any Error,
+                    flags: FSCompleteIOFlags, operationID: FSOperationID) async throws {
+        NSLog("[blntfs] 旧系统KOIO意外completeIO：已拒绝")
+        throw posixError(ENOTSUP)
+    }
+
+    func createFile(name: FSFileName, in directory: FSItem, attributes: FSItem.SetAttributesRequest,
+                    packer: FSExtentPacker) async throws -> (FSItem, FSFileName) {
+        try await createItem(named: name, type: .file, inDirectory: directory, attributes: attributes)
+    }
+
+    func lookupItem(name: FSFileName, in directory: FSItem,
+                    packer: FSExtentPacker) async throws -> (FSItem, FSFileName) {
+        try await lookupItem(named: name, inDirectory: directory)
     }
 }
 
