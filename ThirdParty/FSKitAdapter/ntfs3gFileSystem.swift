@@ -14,6 +14,14 @@ final class ntfs3gFileSystem: FSUnaryFileSystem, FSUnaryFileSystemOperations,
 
     private var volume: ntfs3gVolume?
 
+    static func volumeType(on version: OperatingSystemVersion = ProcessInfo.processInfo.operatingSystemVersion) -> ntfs3gVolume.Type {
+        if version.majorVersion < 26 && (version.majorVersion > 15 ||
+            (version.majorVersion == 15 && version.minorVersion >= 4)) {
+            return ntfs3gLegacyVolume.self
+        }
+        return ntfs3gVolume.self
+    }
+
     // 应用将所选 IOMedia 的不可复用登记标识随挂载请求传入。
     // 资源已由系统打开；核对后始终使用同一个资源，不再按设备名重新打开。
     static func expectedMediaID(_ options: [String]) throws -> UInt64? {
@@ -218,7 +226,7 @@ final class ntfs3gFileSystem: FSUnaryFileSystem, FSUnaryFileSystemOperations,
                 }
             } else { validateWriteCapability = nil }
             let mountLoadOptions = legacyActivationPolicy == nil ? options.taskOptions : []
-            let vol = try ntfs3gVolume(backend: made,
+            let vol = try Self.volumeType().init(backend: made,
                                        mountBackend: { mountOptions, currentReadOnly, readOnlyBackend in
                                            let explicitOptions = mountLoadOptions + mountOptions
                                            try Self.validateIdentity(resource, options: explicitOptions)

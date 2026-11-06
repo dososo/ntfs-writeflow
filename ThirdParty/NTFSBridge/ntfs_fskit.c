@@ -605,6 +605,13 @@ done:
     return -error;
 }
 
+int nfsk_has_open_items(ntfs_fskit_volume *v) {
+    if (!v || !v->vol || !v->devctx) return -EINVAL;
+    for (nfsk_open_ref *entry = v->devctx->open_items; entry; entry = entry->next)
+        if (entry->open) return 1;
+    return 0;
+}
+
 int nfsk_umount(ntfs_fskit_volume *v) {
     if (!v) return 0;
     int error = 0;

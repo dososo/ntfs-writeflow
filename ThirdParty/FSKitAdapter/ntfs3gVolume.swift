@@ -22,7 +22,7 @@ struct NTFSBackend {
 }
 
 @available(macOS 15.4, *)
-final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperations,
+class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperations,
                           FSVolume.ReadWriteOperations, FSVolume.OpenCloseOperations,
                           FSVolume.XattrOperations, FSVolume.RenameOperations,
                           FSVolume.PreallocateOperations {
@@ -42,6 +42,7 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
     private let legacyActivationOptions: [String]
     private var validateWriteCapability: (([String]) throws -> Void)?
     private var writeCapabilityFailure: Error?
+    private var deactivationFailure: Error?
     private struct WritePreparation {
         let token: String
         let mediaID: UInt64
@@ -62,7 +63,7 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
 
     /// `backend` comes from `nfsk_backend_from_block` / `nfsk_backend_from_file`.
     /// Ownership of `backend` transfers to this volume (freed in `teardown`).
-    init(backend: NTFSBackend,
+    required init(backend: NTFSBackend,
          mountBackend: @escaping ([String], Bool, UnsafeMutableRawPointer) throws -> NTFSBackend?,
          onContainerStatusChange: @escaping (FSContainerStatus) -> Void,
          legacyOpenUnlink: Bool = ntfs3gVolume.needsLegacyOpenUnlink,
@@ -295,6 +296,24 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
 
     func deactivate(options: FSDeactivateOptions = []) async throws {
         let closed = try withLock {
+            if let failure = deactivationFailure { throw failure }
+            if mounted, legacyActivationPolicy != nil {
+                // 15.4实际正常卸载可能漏掉unmount回调；仅旧路径补同一收尾，不允许force或仍有打开项。
+                guard !options.contains(.force), let h = handle else { throw posixError(EBUSY) }
+                let opened = nfsk_has_open_items(h)
+                guard opened == 0 else { throw posixError(opened < 0 ? -opened : EBUSY) }
+                NSLog("[blntfs] 旧系统停用补收尾开始")
+                do {
+                    try unmountLocked()
+                    NSLog("[blntfs] 旧系统停用补收尾成功：同步=0 关闭=0 只读重开=0")
+                } catch {
+                    deactivationFailure = error
+                    teardownLocked()
+                    onContainerStatusChange(.notReady(status: error))
+                    NSLog("[blntfs] 旧系统停用补收尾失败：错误码=\((error as NSError).code)")
+                    throw error
+                }
+            }
             guard !mounted else { throw posixError(EBUSY) }
             activated = false
             activationOptions = []
@@ -436,29 +455,10 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
         var failure: Error?
         withLock {
             pendingActivationWrite = false
-            guard mounted, let h = handle, let backend else { return }
-            let rc = nfsk_sync(h)
-            if rc != 0 {
-                failure = posixError(-rc)
-                teardownLocked()
-                return
-            }
-            // unmount 允许清理 I/O；deactivate 不应再访问介质。
-            // 同一后端重开只读引擎，根项只含 MFT 编号，不持有失效的 C 句柄。
-            let closeResult = nfsk_umount(h)
-            handle = nil
-            if closeResult != 0 {
-                failure = posixError(-closeResult)
-                teardownLocked()
-                return
-            }
-            mounted = false
-            readOnly = true
-            var err: Int32 = 0
-            if let reopened = nfsk_mount(backend.backend, true, &err) {
-                handle = reopened
-            } else {
-                failure = posixError(err)
+            do { try unmountLocked() }
+            catch {
+                failure = error
+                if legacyActivationPolicy != nil { deactivationFailure = error }
                 teardownLocked()
             }
         }
@@ -466,6 +466,22 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
             NSLog("[blntfs] 卸载清理失败：\(failure)")
             onContainerStatusChange(.notReady(status: failure))
         }
+    }
+
+    // 调用方持卷锁。消费RW句柄后保留同后端RO引擎，允许同一FSUnary卷实例再次激活。
+    private func unmountLocked() throws {
+        guard mounted else { return }
+        guard let h = handle, let backend else { throw posixError(ENXIO) }
+        let rc = nfsk_sync(h)
+        guard rc == 0 else { throw posixError(-rc) }
+        let closeResult = nfsk_umount(h)
+        handle = nil
+        guard closeResult == 0 else { throw posixError(-closeResult) }
+        mounted = false
+        readOnly = true
+        var error: Int32 = 0
+        guard let reopened = nfsk_mount(backend.backend, true, &error) else { throw posixError(error) }
+        handle = reopened
     }
 
     func synchronize(flags: FSSyncFlags) async throws {
@@ -916,6 +932,39 @@ final class ntfs3gVolume: FSVolume, FSVolume.Operations, FSVolume.PathConfOperat
             activationOpenItems.remove(it.ino)
             evictDeletedItem(item, handle: h)
         }
+    }
+}
+
+// 仅旧系统实例声明KOIO协议以申请公开资源同步能力；逐文件设置公开inhibit请求普通IO，实际内核路由须验证。
+// 不提供物理extent，现代基类不继承此子类的协议遵循。
+@available(macOS 15.4, *)
+final class ntfs3gLegacyVolume: ntfs3gVolume, FSVolumeKernelOffloadedIOOperations {
+    override fileprivate func makeAttributes(_ a: nfsk_attr_t, parentIno: UInt64, preferContext: Bool = false) -> FSItem.Attributes {
+        let attrs = super.makeAttributes(a, parentIno: parentIno, preferContext: preferContext)
+        attrs.inhibitKernelOffloadedIO = true
+        return attrs
+    }
+
+    func blockmapFile(_ file: FSItem, offset: off_t, length: Int, flags: FSBlockmapFlags,
+                      operationID: FSOperationID, packer: FSExtentPacker) async throws {
+        NSLog("[blntfs] 旧系统KOIO意外blockmap：已拒绝")
+        throw posixError(ENOTSUP)
+    }
+
+    func completeIO(for file: FSItem, offset: off_t, length: Int, status: any Error,
+                    flags: FSCompleteIOFlags, operationID: FSOperationID) async throws {
+        NSLog("[blntfs] 旧系统KOIO意外completeIO：已拒绝")
+        throw posixError(ENOTSUP)
+    }
+
+    func createFile(name: FSFileName, in directory: FSItem, attributes: FSItem.SetAttributesRequest,
+                    packer: FSExtentPacker) async throws -> (FSItem, FSFileName) {
+        try await createItem(named: name, type: .file, inDirectory: directory, attributes: attributes)
+    }
+
+    func lookupItem(name: FSFileName, in directory: FSItem,
+                    packer: FSExtentPacker) async throws -> (FSItem, FSFileName) {
+        try await lookupItem(named: name, inDirectory: directory)
     }
 }
 

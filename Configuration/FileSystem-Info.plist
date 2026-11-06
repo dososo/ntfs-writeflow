@@ -19,7 +19,7 @@
 		<key>FSRequiresSecurityScopedPathURLResources</key>
 		<true/>
 		<key>FSSupportsKernelOffloadedIO</key>
-		<false/>
+		<true/>
 		<key>FSVolumeAlwaysIgnoreOwnership</key>
 		<true/>
 		<key>FSActivateOptionSyntax</key>

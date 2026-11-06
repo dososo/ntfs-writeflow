@@ -20,7 +20,8 @@ struct LegacyActivation {
             try identity()
             return try !ntfs3gFileSystem.resolvedMountReadOnly(load + options, resourceWritable: resourceWritable)
         }
-        return try ntfs3gVolume(backend: backend(image, writable: false, counter: counter),
+        let version = OperatingSystemVersion(majorVersion: legacy ? 15 : 26, minorVersion: legacy ? 4 : 0, patchVersion: 0)
+        return try ntfs3gFileSystem.volumeType(on: version).init(backend: backend(image, writable: false, counter: counter),
             mountBackend: { options, currentReadOnly, source in
                 let writable = try policy(options)
                 guard writable == currentReadOnly else { return nil }
@@ -107,12 +108,12 @@ struct LegacyActivation {
             }
             precondition(count.factory == 1, "首次修改入口未执行一次完整权限转换：\(operation)")
             await rejects(EBUSY) { try candidate.mountVolume(taskOptions: ["ro,writeflow-media-id=10"]) }
-            await rejects(EBUSY) { try await candidate.deactivate() }
+            await rejects(EBUSY) { try await candidate.deactivate(options: [.force]) }
             try await candidate.synchronize(flags: .wait)
             await candidate.unmount(); try await candidate.deactivate(); candidate.teardown()
             precondition(count.cleanups == 2, "修改后正常卸载必须精确清理：\(operation)")
         }
-        print("首次修改入口通过：11种修改入口及读打开/关闭/回收跨升级均独立从RO升级且工厂只调用一次；异常迟到mount/deactivate拒绝，正常sync/unmount清理。")
+        print("首次修改入口通过：11种修改入口及读打开/关闭/回收跨升级均独立从RO升级且工厂只调用一次；异常迟到mount/force停用拒绝，正常sync/unmount清理。")
 
         // 尚未修改的激活可以直接停用、卸载或被后续RO覆盖；所有路径保持原始字节。
         for lifecycle in ["停用", "先卸载", "后续RO", "加载RO", "默认RO", "26生命周期"] {
@@ -187,7 +188,7 @@ struct LegacyActivation {
             nfsk_test_fail_sync(0); nfsk_test_fail_close(0)
             precondition(count.status?.state == .notReady)
             await rejects(ENXIO) { try await mkdir(candidate, root, "失败后不能写入") }
-            try await candidate.deactivate(); candidate.teardown()
+            await rejects(EIO) { try await candidate.deactivate() }; candidate.teardown()
             precondition(count.factory == 1 && count.cleanups == 2)
         }
         let repeatedCount = Counter(); let repeated = try volume(image, repeatedCount)

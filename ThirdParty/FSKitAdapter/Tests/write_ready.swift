@@ -31,7 +31,8 @@ struct WriteReadyChecks {
             try identity()
             return try !ntfs3gFileSystem.resolvedMountReadOnly(legacy ? options : load + options, resourceWritable: true)
         }
-        return try ntfs3gVolume(backend: backend(image, false, trace),
+        let version = OperatingSystemVersion(majorVersion: legacy ? 15 : 26, minorVersion: legacy ? 4 : 0, patchVersion: 0)
+        return try ntfs3gFileSystem.volumeType(on: version).init(backend: backend(image, false, trace),
             mountBackend: { options, oldReadOnly, source in
                 let readOnly = try !policy(options)
                 guard readOnly != oldReadOnly else { return nil }
@@ -232,7 +233,7 @@ struct WriteReadyChecks {
         try receipt(try await v.xattr(named: FSFileName(string: prepare + token), of: root))
         precondition(t.factory == 1 && t.checks == 1 && koio_trace_writable_mounts() == 1)
         await denied(EBUSY) { try v.mountVolume(taskOptions: ["ro"]) }
-        await denied(EBUSY) { try await v.deactivate() }
+        await denied(EBUSY) { try await v.deactivate(options: [.force]) }
         let writes = koio_trace_pwrites()
         let ioBeforeStatus = [koio_trace_reads(), writes, koio_trace_syncs()]
         try receipt(try await v.xattr(named: FSFileName(string: ready + token), of: root))
@@ -320,7 +321,7 @@ struct WriteReadyChecks {
         }
         precondition(ioBeforeFailureQuery == [koio_trace_reads(), koio_trace_pwrites(), koio_trace_syncs()],
             "状态查询不得读写、sync或清除已锁存错误")
-        await dirty.unmount(); try await dirty.deactivate(); dirty.teardown()
+        await dirty.unmount(); await denied(EIO) { try await dirty.deactivate() }; dirty.teardown()
         precondition(dirtyTrace.status?.state == .notReady)
         print("状态只读：RO/正常RW/空句柄明确返回；真实引擎同步错误锁存后重复ready/prepare持续EIO、零I/O不清错")
         print("握手拒绝：三类同步失败保RO和零写；nonce格式/冲突/介质冲突/后续RO拒绝；无nonce与现代流程保持")

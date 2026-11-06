@@ -23,7 +23,8 @@ struct WriteCapabilityChecks {
         let policy: ([String]) throws -> Bool = { options in
             try !ntfs3gFileSystem.resolvedMountReadOnly(load + options, resourceWritable: true)
         }
-        return try ntfs3gVolume(backend: backend(image, writable: false, trace: trace),
+        let version = OperatingSystemVersion(majorVersion: legacy ? 15 : 26, minorVersion: legacy ? 4 : 0, patchVersion: 0)
+        return try ntfs3gFileSystem.volumeType(on: version).init(backend: backend(image, writable: false, trace: trace),
             mountBackend: { options, oldReadOnly, source in
                 let readOnly = try !policy(options)
                 guard readOnly != oldReadOnly else { return nil }

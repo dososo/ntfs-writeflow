@@ -13,7 +13,7 @@ struct DiagnosticsView: View {
                 Section("当前验证范围") {
                     Label("磁盘列表来自本机系统", systemImage: "externaldrive")
                     Label("预览版：验证结果仅适用于报告中的版本与设备", systemImage: "info.circle")
-                    Text("通用包包含 Intel 与 Apple Silicon，最低 macOS 13。15.4 及以上使用 FSKit，13～15.3 需要自行安装并批准 macFUSE。当前引擎：\(StorageBackend.current.title)。旧系统与 Intel 硬件完整链、Windows 复读和异常断电仍待验收；重要数据请先备份。格式化和完整修复尚未提供。")
+                    Text("通用包包含 Intel 与 Apple Silicon，最低 macOS 13。15.4～26.3 的只读使用系统原生 NTFS，读写使用 FSKit；26.4 起两种模式均使用 FSKit。13～15.3 需要自行安装并批准 macFUSE。当前读写后端：\(StorageBackend.current.title)。旧系统与 Intel 硬件完整链、Windows 复读和异常断电仍待验收；重要数据请先备份。格式化和完整修复尚未提供。")
                         .foregroundStyle(.secondary)
                 }
                 Section("本地诊断") {

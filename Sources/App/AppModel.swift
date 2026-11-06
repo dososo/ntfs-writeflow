@@ -266,6 +266,7 @@ import ServiceManagement
         NTFS 畅写 · NTFS WriteFlow
         版本：\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "未知")（\(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "未知")）预览版
         读写引擎：NTFS-3G（\(StorageBackend.current.title)）
+        只读路由：15.4～26.3 使用系统原生 NTFS，其余系统按本版发布说明选择后端
         生成时间：\(Date().formatted())
         系统：\(ProcessInfo.processInfo.operatingSystemVersionString)
         扩展状态：\(extensionDiagnostic.title)

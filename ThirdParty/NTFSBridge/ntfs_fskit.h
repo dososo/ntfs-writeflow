@@ -133,6 +133,8 @@ int      nfsk_seek_region(ntfs_fskit_volume *v, uint64_t ino, int64_t offset,
 /* FSKit open/close describe access modes, not descriptor counts. Opening is
  * idempotent; call close only when no access modes remain. */
 int      nfsk_open_item(ntfs_fskit_volume *v, uint64_t ino);
+/* 只读查询真实打开登记；调用方与其他桥接操作一样持卷锁。无打开为0，有为1，错误为负errno。 */
+int      nfsk_has_open_items(ntfs_fskit_volume *v);
 int      nfsk_close_item(ntfs_fskit_volume *v, uint64_t ino);
 int      nfsk_rename(ntfs_fskit_volume *v, uint64_t src_dir, const char *src_name,
                      uint64_t dst_dir, const char *dst_name);
